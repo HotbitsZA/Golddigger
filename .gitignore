@@ -1,0 +1,11 @@
+.DS_Store
+
+build/
+cmake-build-*/
+
+predictor
+trainer
+patcher.bin
+tuner.bin
+
+*.dSYM/
