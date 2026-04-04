@@ -10,6 +10,8 @@ namespace fs = std::filesystem;
 
 namespace
 {
+    constexpr double kSvrSolverEpsilon = 0.001;
+
     std::string stem_or_default(const std::string &path, const std::string &fallback)
     {
         const auto stem = fs::path(path).stem().string();
@@ -134,9 +136,9 @@ void TrainerWorker::run()
         dlib::svr_trainer<kernel_type> trainer;
         trainer.set_kernel(kernel_type(parameters.gamma));
         trainer.set_c(parameters.c);
-        trainer.set_epsilon(parameters.epsilon);
+        trainer.set_epsilon(kSvrSolverEpsilon);
         trainer.set_cache_size(2000); // 2G, Increase cache size to speed up training on larger datasets, but be mindful of memory usage. 
-        trainer.set_epsilon_insensitivity(0.00001); // Internal solver precision
+        trainer.set_epsilon_insensitivity(parameters.epsilon);
 
         // Checking the samples after normalization for NaN values, which can cause dlib to throw exceptions during training.
         for (const auto& sample : samples)        {
@@ -170,7 +172,7 @@ void TrainerWorker::run()
         result.success = true;
         result.message = "Model trained and saved as " + m_modelFile +
                          " using C=" + std::to_string(parameters.c) +
-                         ", epsilon=" + std::to_string(parameters.epsilon) +
+                         ", epsilon_insensitivity=" + std::to_string(parameters.epsilon) +
                          ", gamma=" + std::to_string(parameters.gamma) +
                          ", Support Vectors=" + std::to_string(decisionFunction.basis_vectors.size()); // Nearly equal to the number of samples=overfitting, < 100=underfitting.
 

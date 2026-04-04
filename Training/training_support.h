@@ -25,20 +25,15 @@ struct TrainingDataset
         or allowing more errors but hopefully improving the generalization 
         of the resulting decision_function.  Larger values encourage exact 
         fitting while smaller values of C may encourage better generalization.
-- epsilon:  This parameter defines the epsilon-tube within which no penalty is associated 
-            in the training loss function with points predicted within a distance epsilon 
-            from the actual value. A smaller epsilon can lead to a more complex model that 
-            fits the training data more closely, while a larger epsilon can lead to a simpler 
-            model that may not fit the training data as closely but could generalize better 
-            to unseen data.
-            The error epsilon that determines when training should stop.
-            Generally a good value for this is 0.001.  Smaller values may result
-            in a more accurate solution but take longer to execute.
+- epsilon:  This is the epsilon-insensitive regression tube size used by
+            `svr_trainer::set_epsilon_insensitivity()`. Predictions that land
+            within this tube of the target incur no loss. Smaller values try to
+            fit the training data more tightly, while larger values usually
+            produce smoother models.
 - gamma: This parameter defines how much influence a single training example has. The larger gamma is, the closer other examples must be to be affected. A smaller gamma means a wider influence of each support vector, while a larger gamma means a narrower influence. If gamma is too large, the model may overfit the training data, while if gamma is too small, the model may underfit.
-- epsilon_insensitivity:    This is an internal parameter that controls the precision of the SVR solver. 
-                            A smaller value can lead to a more accurate model but may increase 
-                            training time, while a larger value can speed up training but may 
-                            result in a less accurate model.
+- solver_epsilon:   The internal SVR solver stopping tolerance is kept fixed in
+                    code at a sane default instead of being tuned. Smaller
+                    values can increase runtime substantially.
 - cache_size:   This parameter specifies the cache size in megabytes for the SVR solver. 
                 A larger cache size can speed up training on larger datasets but will use more 
                 memory. The optimal cache size can depend on the size of the dataset and the 
@@ -47,9 +42,8 @@ struct TrainingDataset
 struct TrainingHyperparameters
 {
     double c{10.0};        // 10.0 is a common default for C in SVR, but this can be tuned based on the dataset.
-    double epsilon{0.001}; // 0.001 is a common default for epsilon in SVR, but this can be tuned based on the dataset and the scale of the labels.
-    double gamma{0.5};      // 0.1 is a common default for gamma in RBF kernels, but this can be tuned based on the dataset. A smaller gamma means a wider influence of each support vector, while a larger gamma means a narrower influence.
-    // double epsilon_insensitivity{0.00001}; // Internal solver precision, smaller values can lead to a more accurate model but may increase training time. 
+    double epsilon{0.001}; // Stored as epsilon-insensitivity for the SVR regression tube.
+    double gamma{0.5};     // Default gamma for the RBF kernel; tune based on the dataset.
     // double cache_size{2000}; // Cache size in MB for the SVR solver, larger values can speed up training on larger datasets but will use more memory.
 };
 

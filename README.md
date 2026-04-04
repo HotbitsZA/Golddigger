@@ -5,7 +5,7 @@ Golddigger is a C++17 machine-learning project for training and running short-ho
 It currently supports:
 
 - offline model training from candle CSV files
-- hyperparameter tuning for SVR (`C`, `epsilon`, `gamma`)
+- hyperparameter tuning for SVR (`C`, `epsilon-insensitivity`, `gamma`)
 - daily patching of rolling Dukascopy candle CSV files
 - live prediction from Dukascopy CLI candle data
 - live prediction from Alpha Vantage `FX_INTRADAY`
@@ -31,7 +31,7 @@ Golddigger builds an SVR model on top of engineered candle features such as:
 
 The training flow is:
 
-1. tune `C`, `epsilon`, and `gamma` with `tuner.bin`
+1. tune `C`, `epsilon-insensitivity`, and `gamma` with `tuner.bin`
 2. save the tuned parameters to `Models/tuner_<timeframe>.dat`
 3. run `trainer` to build a model
 4. run `predictor` to fetch live candles and emit predictions
@@ -136,6 +136,8 @@ Default behavior:
 - uses `Data/xauusd-m15-bid-2024-01-01-2026-03-11.csv`
 - writes `Models/tuner_m15.dat`
 - uses `50` max optimizer calls
+- tunes on up to `5000` evenly spaced samples using `3` folds by default
+- derives the epsilon-insensitivity search range automatically from the label distribution
 
 Usage:
 
@@ -143,6 +145,9 @@ Usage:
 ./tuner.bin
 ./tuner.bin --max-calls 25 Data/xauusd-h1.csv
 ./tuner.bin --max-calls 50 --progress-seconds 60 Data/xauusd-m15-bid.csv
+./tuner.bin --max-calls 25 --tuning-samples 8000 --folds 4 Data/xauusd-h1.csv
+./tuner.bin --epsilon-range auto Data/xauusd-m15-bid.csv
+./tuner.bin --epsilon-range 0.00005:0.003 Data/xauusd-m15-bid.csv
 ./tuner.bin Data/xauusd-h1.csv=Models/tuner_h1.dat
 ./tuner.bin Data/xauusd-m15.csv=Models/tuner_m15.dat Data/xauusd-h1.csv=Models/tuner_h1.dat
 ```
@@ -151,6 +156,9 @@ Useful flags:
 
 - `--max-calls N`
 - `--progress-seconds N`
+- `--tuning-samples N`
+- `--folds N`
+- `--epsilon-range auto|MIN:MAX`
 
 Argument format:
 
@@ -162,6 +170,10 @@ Argument format:
 Notes:
 
 - tuning jobs run on worker threads, so progress can be printed while cross-validation is still running
+- the tuner now keeps solver tolerance fixed and tunes `epsilon` as the SVR epsilon-insensitivity parameter
+- by default, tuning uses an evenly spaced subset of the generated samples so large `m15` datasets do not spend hours inside the first cross-validation call
+- by default, the tuner derives a sensible epsilon-insensitivity search range from the dataset's return distribution
+- `--epsilon-range MIN:MAX` lets you override that auto-derived range manually
 - `Ctrl+C` requests a graceful stop and waits for the current evaluation boundary
 
 ### `trainer`

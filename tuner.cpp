@@ -18,6 +18,8 @@ namespace
     constexpr auto kPollInterval = std::chrono::milliseconds(100);
     constexpr int kDefaultMaxFunctionCalls = 50;
     constexpr int kDefaultProgressIntervalSeconds = 10 * 60;
+    constexpr std::size_t kDefaultTuningSamples = 5000;
+    constexpr long kDefaultFoldCount = 3;
     constexpr const char *kDefaultDataFile = "Data/xauusd-m15-bid.csv";
     constexpr const char *kDefaultOutputFile = "Models/tuner_m15.dat";
 
@@ -34,6 +36,7 @@ namespace
         clock_type::time_point nextProgressAt{};
         clock_type::time_point finishedAt{};
         bool hasFinished{false};
+        bool epsilonRangeAnnounced{false};
     };
 
     std::string format_elapsed(clock_type::duration elapsed)
@@ -54,7 +57,7 @@ namespace
 
     void print_usage()
     {
-        std::cout << "Usage: tuner.bin [--max-calls N] [--progress-seconds N] [data.csv[=output.dat] ...]\n";
+        std::cout << "Usage: tuner.bin [--max-calls N] [--progress-seconds N] [--tuning-samples N] [--folds N] [--epsilon-range auto|MIN:MAX] [data.csv[=output.dat] ...]\n";
     }
 
     TuningRequest parse_tuning_argument(const std::string &argument)
@@ -65,6 +68,17 @@ namespace
 
         return {argument.substr(0, separator), argument.substr(separator + 1)};
     }
+
+    bool parse_range_spec(const std::string &value, double &rangeMin, double &rangeMax)
+    {
+        const auto separator = value.find(':');
+        if (separator == std::string::npos)
+            return false;
+
+        rangeMin = std::stod(value.substr(0, separator));
+        rangeMax = std::stod(value.substr(separator + 1));
+        return true;
+    }
 }
 
 int main(int argc, char *argv[])
@@ -73,6 +87,11 @@ int main(int argc, char *argv[])
 
     int maxFunctionCalls = kDefaultMaxFunctionCalls;
     auto progressInterval = std::chrono::seconds(kDefaultProgressIntervalSeconds);
+    std::size_t maxTuningSamples = kDefaultTuningSamples;
+    long foldCount = kDefaultFoldCount;
+    bool autoEpsilonRange = true;
+    double manualEpsilonMin = 0.0001;
+    double manualEpsilonMax = 0.1;
     std::vector<RunningWorker> workers;
     std::unordered_set<std::string> outputFiles;
 
@@ -116,6 +135,74 @@ int main(int argc, char *argv[])
             continue;
         }
 
+        if (argument == "--tuning-samples")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Missing value for --tuning-samples\n";
+                return 1;
+            }
+
+            const auto parsedValue = std::stoll(argv[++i]);
+            if (parsedValue < 0)
+            {
+                std::cerr << "--tuning-samples must be 0 or greater\n";
+                return 1;
+            }
+
+            maxTuningSamples = static_cast<std::size_t>(parsedValue);
+            continue;
+        }
+
+        if (argument == "--folds")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Missing value for --folds\n";
+                return 1;
+            }
+
+            foldCount = std::stol(argv[++i]);
+            if (foldCount < 2)
+            {
+                std::cerr << "--folds must be at least 2\n";
+                return 1;
+            }
+
+            continue;
+        }
+
+        if (argument == "--epsilon-range")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Missing value for --epsilon-range\n";
+                return 1;
+            }
+
+            const std::string value = argv[++i];
+            if (value == "auto")
+            {
+                autoEpsilonRange = true;
+                continue;
+            }
+
+            if (!parse_range_spec(value, manualEpsilonMin, manualEpsilonMax))
+            {
+                std::cerr << "--epsilon-range must be 'auto' or 'min:max'\n";
+                return 1;
+            }
+
+            if (!(manualEpsilonMin > 0.0) || !(manualEpsilonMax > manualEpsilonMin))
+            {
+                std::cerr << "--epsilon-range manual values must satisfy 0 < min < max\n";
+                return 1;
+            }
+
+            autoEpsilonRange = false;
+            continue;
+        }
+
         requests.push_back(parse_tuning_argument(argument));
     }
 
@@ -126,8 +213,13 @@ int main(int argc, char *argv[])
     for (const auto &request : requests)
     {
         auto worker = request.outputFile.empty()
-                          ? std::make_unique<TunerWorker>(request.dataFile, maxFunctionCalls)
-                          : std::make_unique<TunerWorker>(request.dataFile, maxFunctionCalls, request.outputFile);
+                          ? std::make_unique<TunerWorker>(request.dataFile, maxFunctionCalls, maxTuningSamples, foldCount)
+                          : std::make_unique<TunerWorker>(request.dataFile, maxFunctionCalls, maxTuningSamples, foldCount, request.outputFile);
+
+        if (autoEpsilonRange)
+            worker->useAutoEpsilonRange();
+        else
+            worker->setManualEpsilonRange(manualEpsilonMin, manualEpsilonMax);
 
         if (!outputFiles.insert(worker->outputFile()).second)
         {
@@ -145,7 +237,19 @@ int main(int argc, char *argv[])
         std::cout << "Starting " << worker.worker->name()
                   << " using " << worker.worker->dataFile()
                   << " -> " << worker.worker->outputFile()
-                  << " (max calls: " << worker.worker->maxFunctionCalls() << ")\n";
+                  << " (max calls: " << worker.worker->maxFunctionCalls()
+                  << ", tuning samples: ";
+        if (worker.worker->maxTuningSamples() == 0)
+            std::cout << "all";
+        else
+            std::cout << worker.worker->maxTuningSamples();
+        std::cout << ", folds: " << worker.worker->foldCount()
+                  << ", eps-ins range: ";
+        if (worker.worker->epsilonRangeMode() == TunerWorker::EpsilonRangeMode::Auto)
+            std::cout << "auto";
+        else
+            std::cout << worker.worker->manualEpsilonMin() << ':' << worker.worker->manualEpsilonMax();
+        std::cout << ")\n";
 
         if (!worker.worker->startThread(cBaseWorker_V2::duration_type::zero()))
         {
@@ -187,18 +291,52 @@ int main(int argc, char *argv[])
             }
 
             waitingForWorkers = true;
+            const auto progress = worker.worker->progress();
+
+            if (!worker.epsilonRangeAnnounced && progress.hasEpsilonRange)
+            {
+                std::cout << '[' << worker.worker->name() << "] ";
+                if (progress.epsilonRangeWasAuto)
+                {
+                    std::cout << "Derived epsilon-insensitivity range from label distribution: ["
+                              << progress.epsilonRangeMin << ", "
+                              << progress.epsilonRangeMax << "]\n";
+                }
+                else
+                {
+                    std::cout << "Using manual epsilon-insensitivity range: ["
+                              << progress.epsilonRangeMin << ", "
+                              << progress.epsilonRangeMax << "]\n";
+                }
+                worker.epsilonRangeAnnounced = true;
+            }
 
             if (now >= worker.nextProgressAt)
             {
-                const auto progress = worker.worker->progress();
                 std::cout << '[' << worker.worker->name() << "] "
                           << "Still running after " << format_elapsed(now - worker.startedAt)
                           << " | stage: " << progress.stage;
 
                 if (progress.sampleCount > 0)
                 {
-                    std::cout << " | " << progress.sampleCount << " samples from "
+                    std::cout << " | " << progress.sampleCount << " total samples from "
                               << progress.candleCount << " candles";
+                }
+
+                if (progress.tuningSampleCount > 0)
+                {
+                    std::cout << " | tuning " << progress.tuningSampleCount;
+                    if (progress.sampleCount > 0 && progress.tuningSampleCount != progress.sampleCount)
+                        std::cout << "/" << progress.sampleCount;
+                    std::cout << " samples";
+                    if (progress.foldCount > 0)
+                        std::cout << " across " << progress.foldCount << " folds";
+                }
+
+                if (progress.hasEpsilonRange)
+                {
+                    std::cout << " | eps-ins range=[" << progress.epsilonRangeMin
+                              << ", " << progress.epsilonRangeMax << "]";
                 }
 
                 if (progress.startedEvaluations > 0)
@@ -210,7 +348,7 @@ int main(int argc, char *argv[])
                 if (progress.evaluationRunning && progress.hasCurrentParameters)
                 {
                     std::cout << " | current C=" << progress.currentParameters.c
-                              << " epsilon=" << progress.currentParameters.epsilon
+                              << " eps-ins=" << progress.currentParameters.epsilon
                               << " gamma=" << progress.currentParameters.gamma
                               << " | current eval running for "
                               << format_elapsed(now - progress.currentEvaluationStartedAt);
@@ -220,7 +358,7 @@ int main(int argc, char *argv[])
                 {
                     std::cout << " | best mse=" << progress.bestMse
                               << " | C=" << progress.bestParameters.c
-                              << " epsilon=" << progress.bestParameters.epsilon
+                              << " eps-ins=" << progress.bestParameters.epsilon
                               << " gamma=" << progress.bestParameters.gamma;
                 }
 
@@ -244,8 +382,20 @@ int main(int argc, char *argv[])
         {
             std::cout << '[' << worker.worker->name() << "] "
                       << result.message
-                      << " (" << result.sampleCount << " samples from "
-                      << result.candleCount << " candles"
+                      << " (" << result.sampleCount << " total samples from "
+                      << result.candleCount << " candles";
+            if (result.tuningSampleCount > 0)
+            {
+                std::cout << ", tuned on " << result.tuningSampleCount << " samples";
+                if (result.foldCount > 0)
+                    std::cout << " across " << result.foldCount << " folds";
+            }
+            if (result.hasEpsilonRange)
+            {
+                std::cout << ", eps-ins range=[" << result.epsilonRangeMin
+                          << ", " << result.epsilonRangeMax << "]";
+            }
+            std::cout
                       << ", " << result.completedEvaluations << " completed evaluations"
                       << ", completed in " << elapsed << ")\n";
         }
