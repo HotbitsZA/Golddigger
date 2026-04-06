@@ -18,6 +18,10 @@ struct TuningJobResult
     bool epsilonRangeWasAuto{true};
     double epsilonRangeMin{0.0};
     double epsilonRangeMax{0.0};
+    bool hasGammaRange{false};
+    bool gammaRangeWasAuto{true};
+    double gammaRangeMin{0.0};
+    double gammaRangeMax{0.0};
     std::size_t completedEvaluations{0};
     double mse{0.0};
     TrainingHyperparameters parameters;
@@ -34,6 +38,10 @@ struct TuningProgress
     bool epsilonRangeWasAuto{true};
     double epsilonRangeMin{0.0};
     double epsilonRangeMax{0.0};
+    bool hasGammaRange{false};
+    bool gammaRangeWasAuto{true};
+    double gammaRangeMin{0.0};
+    double gammaRangeMax{0.0};
     std::size_t startedEvaluations{0};
     std::size_t completedEvaluations{0};
     bool evaluationRunning{false};
@@ -49,7 +57,7 @@ struct TuningProgress
 class TunerWorker final : public cBaseWorker_V2
 {
 public:
-    enum class EpsilonRangeMode
+    enum class RangeMode
     {
         Auto,
         Manual,
@@ -64,9 +72,14 @@ public:
 
     void useAutoEpsilonRange() noexcept;
     void setManualEpsilonRange(double epsilonMin, double epsilonMax) noexcept;
-    EpsilonRangeMode epsilonRangeMode() const noexcept;
+    RangeMode epsilonRangeMode() const noexcept;
     double manualEpsilonMin() const noexcept;
     double manualEpsilonMax() const noexcept;
+    void useAutoGammaRange() noexcept;
+    void setManualGammaRange(double gammaMin, double gammaMax) noexcept;
+    RangeMode gammaRangeMode() const noexcept;
+    double manualGammaMin() const noexcept;
+    double manualGammaMax() const noexcept;
     const std::string &dataFile() const noexcept;
     const std::string &outputFile() const noexcept;
     int maxFunctionCalls() const noexcept;
@@ -91,6 +104,7 @@ private:
         std::size_t tuningSampleCount = 0,
         long foldCount = 0);
     void setEpsilonRange(double epsilonMin, double epsilonMax, bool wasAuto);
+    void setGammaRange(double gammaMin, double gammaMax, bool wasAuto);
     void beginEvaluation(const TrainingHyperparameters &parameters);
     void completeEvaluation(double score, const TrainingHyperparameters &parameters);
 
@@ -99,9 +113,12 @@ private:
     int m_maxFunctionCalls{0};
     std::size_t m_maxTuningSamples{0};
     long m_foldCount{0};
-    EpsilonRangeMode m_epsilonRangeMode{EpsilonRangeMode::Auto};
+    RangeMode m_epsilonRangeMode{RangeMode::Auto};
     double m_manualEpsilonMin{0.0001};
     double m_manualEpsilonMax{0.1};
+    RangeMode m_gammaRangeMode{RangeMode::Auto};
+    double m_manualGammaMin{0.0001};
+    double m_manualGammaMax{1.0};
 
     mutable std::mutex m_resultMutex;
     TuningJobResult m_result;

@@ -17,11 +17,21 @@ namespace
     constexpr long kMinFoldCount = 2;
     constexpr double kMinAutoEpsilon = 1e-6;
     constexpr double kMaxAutoEpsilon = 0.1;
+    constexpr std::size_t kGammaReferenceSampleCount = 400;
+    constexpr double kMinAutoGamma = 1e-5;
+    constexpr double kMaxAutoGamma = 10.0;
+    constexpr double kMinGammaDistance = 1e-6;
 
     struct EpsilonRange
     {
         double min{0.0001};
         double max{0.1};
+    };
+
+    struct GammaRange
+    {
+        double min{0.0001};
+        double max{1.0};
     };
 
     std::string stem_or_default(const std::string &path, const std::string &fallback)
@@ -53,6 +63,26 @@ namespace
                 (i == denominator) ? (inputCount - 1) : ((i * (inputCount - 1)) / denominator);
             subset.samples.push_back(dataset.samples[index]);
             subset.labels.push_back(dataset.labels[index]);
+        }
+
+        return subset;
+    }
+
+    std::vector<sample_type> build_evenly_spaced_sample_subset(const std::vector<sample_type> &samples, std::size_t maxSamples)
+    {
+        if (maxSamples == 0 || samples.size() <= maxSamples)
+            return samples;
+
+        std::vector<sample_type> subset;
+        subset.reserve(maxSamples);
+
+        const std::size_t inputCount = samples.size();
+        const std::size_t denominator = maxSamples - 1;
+        for (std::size_t i = 0; i < maxSamples; ++i)
+        {
+            const std::size_t index =
+                (i == denominator) ? (inputCount - 1) : ((i * (inputCount - 1)) / denominator);
+            subset.push_back(samples[index]);
         }
 
         return subset;
@@ -104,6 +134,52 @@ namespace
 
         return {epsilonMin, epsilonMax};
     }
+
+    GammaRange derive_gamma_range_from_samples(const std::vector<sample_type> &samples)
+    {
+        if (samples.size() < 2)
+            return {};
+
+        const auto referenceSamples =
+            build_evenly_spaced_sample_subset(samples, std::min<std::size_t>(samples.size(), kGammaReferenceSampleCount));
+
+        std::vector<double> squaredDistances;
+        squaredDistances.reserve((referenceSamples.size() * (referenceSamples.size() - 1)) / 2);
+
+        for (std::size_t i = 0; i < referenceSamples.size(); ++i)
+        {
+            for (std::size_t j = i + 1; j < referenceSamples.size(); ++j)
+            {
+                double distanceSquared = 0.0;
+                for (long k = 0; k < referenceSamples[i].size(); ++k)
+                {
+                    const double diff = referenceSamples[i](k) - referenceSamples[j](k);
+                    distanceSquared += diff * diff;
+                }
+
+                if (distanceSquared > 0.0)
+                    squaredDistances.push_back(distanceSquared);
+            }
+        }
+
+        if (squaredDistances.empty())
+            return {};
+
+        std::sort(squaredDistances.begin(), squaredDistances.end());
+
+        const double q50 = quantile_sorted(squaredDistances, 0.50);
+        const double centerGamma = 1.0 / std::max(q50, kMinGammaDistance);
+        double gammaMin = std::max(kMinAutoGamma, centerGamma / 100.0);
+        double gammaMax = std::min(kMaxAutoGamma, centerGamma * 100.0);
+
+        if (gammaMax <= gammaMin)
+            gammaMax = std::min(kMaxAutoGamma, gammaMin * 100.0);
+
+        if (gammaMax <= gammaMin)
+            gammaMax = gammaMin * 2.0;
+
+        return {gammaMin, gammaMax};
+    }
 }
 
 TunerWorker::TunerWorker(
@@ -123,17 +199,17 @@ TunerWorker::TunerWorker(
 
 void TunerWorker::useAutoEpsilonRange() noexcept
 {
-    m_epsilonRangeMode = EpsilonRangeMode::Auto;
+    m_epsilonRangeMode = RangeMode::Auto;
 }
 
 void TunerWorker::setManualEpsilonRange(double epsilonMin, double epsilonMax) noexcept
 {
-    m_epsilonRangeMode = EpsilonRangeMode::Manual;
+    m_epsilonRangeMode = RangeMode::Manual;
     m_manualEpsilonMin = epsilonMin;
     m_manualEpsilonMax = epsilonMax;
 }
 
-TunerWorker::EpsilonRangeMode TunerWorker::epsilonRangeMode() const noexcept
+TunerWorker::RangeMode TunerWorker::epsilonRangeMode() const noexcept
 {
     return m_epsilonRangeMode;
 }
@@ -146,6 +222,33 @@ double TunerWorker::manualEpsilonMin() const noexcept
 double TunerWorker::manualEpsilonMax() const noexcept
 {
     return m_manualEpsilonMax;
+}
+
+void TunerWorker::useAutoGammaRange() noexcept
+{
+    m_gammaRangeMode = RangeMode::Auto;
+}
+
+void TunerWorker::setManualGammaRange(double gammaMin, double gammaMax) noexcept
+{
+    m_gammaRangeMode = RangeMode::Manual;
+    m_manualGammaMin = gammaMin;
+    m_manualGammaMax = gammaMax;
+}
+
+TunerWorker::RangeMode TunerWorker::gammaRangeMode() const noexcept
+{
+    return m_gammaRangeMode;
+}
+
+double TunerWorker::manualGammaMin() const noexcept
+{
+    return m_manualGammaMin;
+}
+
+double TunerWorker::manualGammaMax() const noexcept
+{
+    return m_manualGammaMax;
 }
 
 const std::string &TunerWorker::dataFile() const noexcept
@@ -240,11 +343,22 @@ bool TunerWorker::preRun()
         return false;
     }
 
-    if (m_epsilonRangeMode == EpsilonRangeMode::Manual)
+    if (m_epsilonRangeMode == RangeMode::Manual)
     {
         if (!(m_manualEpsilonMin > 0.0) || !(m_manualEpsilonMax > m_manualEpsilonMin))
         {
             result.message = "Manual epsilon range must satisfy 0 < min < max.";
+            setStage("failed");
+            setResult(std::move(result));
+            return false;
+        }
+    }
+
+    if (m_gammaRangeMode == RangeMode::Manual)
+    {
+        if (!(m_manualGammaMin > 0.0) || !(m_manualGammaMax > m_manualGammaMin))
+        {
+            result.message = "Manual gamma range must satisfy 0 < min < max.";
             setStage("failed");
             setResult(std::move(result));
             return false;
@@ -293,12 +407,12 @@ void TunerWorker::run()
         result.foldCount = folds;
 
         const auto epsilonRange =
-            (m_epsilonRangeMode == EpsilonRangeMode::Auto)
+            (m_epsilonRangeMode == RangeMode::Auto)
                 ? derive_epsilon_range_from_labels(dataset.labels)
                 : EpsilonRange{m_manualEpsilonMin, m_manualEpsilonMax};
 
         result.hasEpsilonRange = true;
-        result.epsilonRangeWasAuto = (m_epsilonRangeMode == EpsilonRangeMode::Auto);
+        result.epsilonRangeWasAuto = (m_epsilonRangeMode == RangeMode::Auto);
         result.epsilonRangeMin = epsilonRange.min;
         result.epsilonRangeMax = epsilonRange.max;
         setEpsilonRange(epsilonRange.min, epsilonRange.max, result.epsilonRangeWasAuto);
@@ -324,6 +438,17 @@ void TunerWorker::run()
         normalizer.train(samples);
         for (auto &sample : samples)
             sample = normalizer(sample);
+
+        const auto gammaRange =
+            (m_gammaRangeMode == RangeMode::Auto)
+                ? derive_gamma_range_from_samples(samples)
+                : GammaRange{m_manualGammaMin, m_manualGammaMax};
+
+        result.hasGammaRange = true;
+        result.gammaRangeWasAuto = (m_gammaRangeMode == RangeMode::Auto);
+        result.gammaRangeMin = gammaRange.min;
+        result.gammaRangeMax = gammaRange.max;
+        setGammaRange(gammaRange.min, gammaRange.max, result.gammaRangeWasAuto);
 
         if (folds < 2)
             throw std::runtime_error("Not enough samples for cross validation in " + m_dataFile);
@@ -368,8 +493,8 @@ void TunerWorker::run()
 
         const auto optimizationResult = dlib::find_max_global(
             crossValidationScore,
-            {0.01, epsilonRange.min, 0.0001},
-            {1000.0, epsilonRange.max, 1.0},
+            {0.01, epsilonRange.min, gammaRange.min},
+            {1000.0, epsilonRange.max, gammaRange.max},
             dlib::max_function_calls(m_maxFunctionCalls));
 
         if (!continueRunning())
@@ -399,7 +524,9 @@ void TunerWorker::run()
                          ", gamma=" + std::to_string(parameters.gamma) +
                          ", mse=" + std::to_string(result.mse) +
                          ", epsilon_range=[" + std::to_string(result.epsilonRangeMin) +
-                         ", " + std::to_string(result.epsilonRangeMax) + "]";
+                         ", " + std::to_string(result.epsilonRangeMax) + "]" +
+                         ", gamma_range=[" + std::to_string(result.gammaRangeMin) +
+                         ", " + std::to_string(result.gammaRangeMax) + "]";
 
         updateHeartbeat();
         setStage("completed", result.candleCount, result.sampleCount, result.tuningSampleCount, result.foldCount);
@@ -453,6 +580,15 @@ void TunerWorker::setEpsilonRange(double epsilonMin, double epsilonMax, bool was
     m_progress.epsilonRangeWasAuto = wasAuto;
     m_progress.epsilonRangeMin = epsilonMin;
     m_progress.epsilonRangeMax = epsilonMax;
+}
+
+void TunerWorker::setGammaRange(double gammaMin, double gammaMax, bool wasAuto)
+{
+    std::lock_guard<std::mutex> lock(m_progressMutex);
+    m_progress.hasGammaRange = true;
+    m_progress.gammaRangeWasAuto = wasAuto;
+    m_progress.gammaRangeMin = gammaMin;
+    m_progress.gammaRangeMax = gammaMax;
 }
 
 void TunerWorker::beginEvaluation(const TrainingHyperparameters &parameters)

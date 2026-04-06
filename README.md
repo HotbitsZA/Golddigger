@@ -138,6 +138,7 @@ Default behavior:
 - uses `50` max optimizer calls
 - tunes on up to `5000` evenly spaced samples using `3` folds by default
 - derives the epsilon-insensitivity search range automatically from the label distribution
+- derives the gamma search range automatically from normalized sample distances
 
 Usage:
 
@@ -148,6 +149,8 @@ Usage:
 ./tuner.bin --max-calls 25 --tuning-samples 8000 --folds 4 Data/xauusd-h1.csv
 ./tuner.bin --epsilon-range auto Data/xauusd-m15-bid.csv
 ./tuner.bin --epsilon-range 0.00005:0.003 Data/xauusd-m15-bid.csv
+./tuner.bin --gamma-range auto Data/xauusd-m15-bid.csv
+./tuner.bin --gamma-range 0.0001:3 Data/xauusd-m15-bid.csv
 ./tuner.bin Data/xauusd-h1.csv=Models/tuner_h1.dat
 ./tuner.bin Data/xauusd-m15.csv=Models/tuner_m15.dat Data/xauusd-h1.csv=Models/tuner_h1.dat
 ```
@@ -159,6 +162,7 @@ Useful flags:
 - `--tuning-samples N`
 - `--folds N`
 - `--epsilon-range auto|MIN:MAX`
+- `--gamma-range auto|MIN:MAX`
 
 Argument format:
 
@@ -173,7 +177,9 @@ Notes:
 - the tuner now keeps solver tolerance fixed and tunes `epsilon` as the SVR epsilon-insensitivity parameter
 - by default, tuning uses an evenly spaced subset of the generated samples so large `m15` datasets do not spend hours inside the first cross-validation call
 - by default, the tuner derives a sensible epsilon-insensitivity search range from the dataset's return distribution
+- by default, the tuner derives a sensible gamma search range from normalized sample distances
 - `--epsilon-range MIN:MAX` lets you override that auto-derived range manually
+- `--gamma-range MIN:MAX` lets you override the auto-derived gamma range manually
 - `Ctrl+C` requests a graceful stop and waits for the current evaluation boundary
 
 ### `trainer`

@@ -36,7 +36,7 @@ namespace
         clock_type::time_point nextProgressAt{};
         clock_type::time_point finishedAt{};
         bool hasFinished{false};
-        bool epsilonRangeAnnounced{false};
+        bool parameterRangesAnnounced{false};
     };
 
     std::string format_elapsed(clock_type::duration elapsed)
@@ -57,7 +57,7 @@ namespace
 
     void print_usage()
     {
-        std::cout << "Usage: tuner.bin [--max-calls N] [--progress-seconds N] [--tuning-samples N] [--folds N] [--epsilon-range auto|MIN:MAX] [data.csv[=output.dat] ...]\n";
+        std::cout << "Usage: tuner.bin [--max-calls N] [--progress-seconds N] [--tuning-samples N] [--folds N] [--epsilon-range auto|MIN:MAX] [--gamma-range auto|MIN:MAX] [data.csv[=output.dat] ...]\n";
     }
 
     TuningRequest parse_tuning_argument(const std::string &argument)
@@ -92,6 +92,9 @@ int main(int argc, char *argv[])
     bool autoEpsilonRange = true;
     double manualEpsilonMin = 0.0001;
     double manualEpsilonMax = 0.1;
+    bool autoGammaRange = true;
+    double manualGammaMin = 0.0001;
+    double manualGammaMax = 1.0;
     std::vector<RunningWorker> workers;
     std::unordered_set<std::string> outputFiles;
 
@@ -203,6 +206,37 @@ int main(int argc, char *argv[])
             continue;
         }
 
+        if (argument == "--gamma-range")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Missing value for --gamma-range\n";
+                return 1;
+            }
+
+            const std::string value = argv[++i];
+            if (value == "auto")
+            {
+                autoGammaRange = true;
+                continue;
+            }
+
+            if (!parse_range_spec(value, manualGammaMin, manualGammaMax))
+            {
+                std::cerr << "--gamma-range must be 'auto' or 'min:max'\n";
+                return 1;
+            }
+
+            if (!(manualGammaMin > 0.0) || !(manualGammaMax > manualGammaMin))
+            {
+                std::cerr << "--gamma-range manual values must satisfy 0 < min < max\n";
+                return 1;
+            }
+
+            autoGammaRange = false;
+            continue;
+        }
+
         requests.push_back(parse_tuning_argument(argument));
     }
 
@@ -220,6 +254,11 @@ int main(int argc, char *argv[])
             worker->useAutoEpsilonRange();
         else
             worker->setManualEpsilonRange(manualEpsilonMin, manualEpsilonMax);
+
+        if (autoGammaRange)
+            worker->useAutoGammaRange();
+        else
+            worker->setManualGammaRange(manualGammaMin, manualGammaMax);
 
         if (!outputFiles.insert(worker->outputFile()).second)
         {
@@ -245,10 +284,15 @@ int main(int argc, char *argv[])
             std::cout << worker.worker->maxTuningSamples();
         std::cout << ", folds: " << worker.worker->foldCount()
                   << ", eps-ins range: ";
-        if (worker.worker->epsilonRangeMode() == TunerWorker::EpsilonRangeMode::Auto)
+        if (worker.worker->epsilonRangeMode() == TunerWorker::RangeMode::Auto)
             std::cout << "auto";
         else
             std::cout << worker.worker->manualEpsilonMin() << ':' << worker.worker->manualEpsilonMax();
+        std::cout << ", gamma range: ";
+        if (worker.worker->gammaRangeMode() == TunerWorker::RangeMode::Auto)
+            std::cout << "auto";
+        else
+            std::cout << worker.worker->manualGammaMin() << ':' << worker.worker->manualGammaMax();
         std::cout << ")\n";
 
         if (!worker.worker->startThread(cBaseWorker_V2::duration_type::zero()))
@@ -293,22 +337,36 @@ int main(int argc, char *argv[])
             waitingForWorkers = true;
             const auto progress = worker.worker->progress();
 
-            if (!worker.epsilonRangeAnnounced && progress.hasEpsilonRange)
+            if (!worker.parameterRangesAnnounced && progress.hasEpsilonRange && progress.hasGammaRange)
             {
                 std::cout << '[' << worker.worker->name() << "] ";
                 if (progress.epsilonRangeWasAuto)
                 {
                     std::cout << "Derived epsilon-insensitivity range from label distribution: ["
                               << progress.epsilonRangeMin << ", "
-                              << progress.epsilonRangeMax << "]\n";
+                              << progress.epsilonRangeMax << "]";
                 }
                 else
                 {
                     std::cout << "Using manual epsilon-insensitivity range: ["
                               << progress.epsilonRangeMin << ", "
-                              << progress.epsilonRangeMax << "]\n";
+                              << progress.epsilonRangeMax << "]";
                 }
-                worker.epsilonRangeAnnounced = true;
+
+                std::cout << " | ";
+                if (progress.gammaRangeWasAuto)
+                {
+                    std::cout << "derived gamma range from normalized sample distances: ["
+                              << progress.gammaRangeMin << ", "
+                              << progress.gammaRangeMax << "]\n";
+                }
+                else
+                {
+                    std::cout << "using manual gamma range: ["
+                              << progress.gammaRangeMin << ", "
+                              << progress.gammaRangeMax << "]\n";
+                }
+                worker.parameterRangesAnnounced = true;
             }
 
             if (now >= worker.nextProgressAt)
@@ -337,6 +395,12 @@ int main(int argc, char *argv[])
                 {
                     std::cout << " | eps-ins range=[" << progress.epsilonRangeMin
                               << ", " << progress.epsilonRangeMax << "]";
+                }
+
+                if (progress.hasGammaRange)
+                {
+                    std::cout << " | gamma range=[" << progress.gammaRangeMin
+                              << ", " << progress.gammaRangeMax << "]";
                 }
 
                 if (progress.startedEvaluations > 0)
@@ -394,6 +458,11 @@ int main(int argc, char *argv[])
             {
                 std::cout << ", eps-ins range=[" << result.epsilonRangeMin
                           << ", " << result.epsilonRangeMax << "]";
+            }
+            if (result.hasGammaRange)
+            {
+                std::cout << ", gamma range=[" << result.gammaRangeMin
+                          << ", " << result.gammaRangeMax << "]";
             }
             std::cout
                       << ", " << result.completedEvaluations << " completed evaluations"
