@@ -14,8 +14,8 @@ struct PredictorConfig
     std::string modelFile{"Models/gold_digger_m15.dat"};
     std::string instrument{"xauusd"};
     CandleTimeframe timeframe{CandleTimeframe::M15};
-    std::size_t minimumCandles{30};
-    std::size_t bootstrapCandles{40};
+    std::size_t minimumCandles{50};
+    std::size_t bootstrapCandles{64};
     std::size_t historyRetention{128};
     std::chrono::seconds pollInterval{5};
     std::chrono::seconds availabilityDelay{60};
@@ -36,6 +36,7 @@ private:
     bool emitPrediction() const;
     void normalizeCandles(std::vector<Candle> &candles) const;
     void trimHistory();
+    std::size_t requiredHistoryCandles() const noexcept;
     std::uint64_t latestAvailableUpperBoundMs(std::uint64_t nowTimestampMs) const;
     std::uint64_t nextFetchFromTimestampMs() const;
     std::chrono::system_clock::time_point nextAvailabilityTime() const;

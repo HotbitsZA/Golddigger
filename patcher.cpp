@@ -10,9 +10,13 @@
 
 namespace
 {
+    constexpr std::uint64_t kUtcDayMs = 24ull * 60ull * 60ull * 1000ull;
+
     void print_usage()
     {
-        std::cout << "Usage: patcher.bin [--date YYYY-MM-DD] [--instrument SYMBOL]\n"
+        std::cout << "Usage: patcher.bin [--date YYYY-MM-DD|DD-MM-YYYY]\n"
+                  << "                   [--from YYYY-MM-DD|DD-MM-YYYY --to YYYY-MM-DD|DD-MM-YYYY]\n"
+                  << "                   [--instrument SYMBOL]\n"
                   << "                   [--data-dir DIR] [--timeframes m15,h1,d1]\n"
                   << "                   [--dukascopy-command CMD]\n";
     }
@@ -52,11 +56,19 @@ int main(int argc, char *argv[])
 {
     DailyPatchRequest request;
     std::string dukascopyCommand{"npx dukascopy-node"};
+    bool hasSingleDate = false;
+    bool hasRangeStart = false;
+    bool hasRangeEnd = false;
+    std::uint64_t rangeStartTimestampMs = 0;
+    std::uint64_t rangeEndTimestampMs = 0;
 
     if (const char *envCommand = std::getenv("DUKASCOPY_NODE_COMMAND"))
         dukascopyCommand = envCommand;
 
-    request.dayStartTimestampMs = previous_utc_day_start_timestamp_ms();
+    const auto defaultDayStartTimestampMs = previous_utc_day_start_timestamp_ms();
+    request.dayStartTimestampMs = defaultDayStartTimestampMs;
+    rangeStartTimestampMs = defaultDayStartTimestampMs;
+    rangeEndTimestampMs = defaultDayStartTimestampMs;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -82,9 +94,34 @@ int main(int argc, char *argv[])
         {
             if (!parse_utc_date(require_value("--date"), request.dayStartTimestampMs))
             {
-                std::cerr << "Invalid date for --date. Use YYYY-MM-DD.\n";
+                std::cerr << "Invalid date for --date. Use YYYY-MM-DD or DD-MM-YYYY.\n";
                 return 1;
             }
+
+            hasSingleDate = true;
+            continue;
+        }
+        else if (argument == "--from")
+        {
+            if (!parse_utc_date(require_value("--from"), rangeStartTimestampMs))
+            {
+                std::cerr << "Invalid date for --from. Use YYYY-MM-DD or DD-MM-YYYY.\n";
+                return 1;
+            }
+
+            hasRangeStart = true;
+            continue;
+        }
+        else if (argument == "--to")
+        {
+            if (!parse_utc_date(require_value("--to"), rangeEndTimestampMs))
+            {
+                std::cerr << "Invalid date for --to. Use YYYY-MM-DD or DD-MM-YYYY.\n";
+                return 1;
+            }
+
+            hasRangeEnd = true;
+            continue;
         }
         else if (argument == "--instrument")
         {
@@ -110,28 +147,101 @@ int main(int argc, char *argv[])
         }
     }
 
+    if (hasSingleDate && (hasRangeStart || hasRangeEnd))
+    {
+        std::cerr << "Use either --date or --from/--to, not both.\n";
+        return 1;
+    }
+
+    if (hasRangeStart != hasRangeEnd)
+    {
+        std::cerr << "--from and --to must be provided together.\n";
+        return 1;
+    }
+
+    if (hasSingleDate)
+    {
+        rangeStartTimestampMs = request.dayStartTimestampMs;
+        rangeEndTimestampMs = request.dayStartTimestampMs;
+    }
+    else if (hasRangeStart && hasRangeEnd)
+    {
+        if (rangeEndTimestampMs < rangeStartTimestampMs)
+        {
+            std::cerr << "--to must be the same day as or after --from.\n";
+            return 1;
+        }
+    }
+
     try
     {
         DukascopyCliDataProvider provider(dukascopyCommand);
         DailyCsvUpdater updater(provider);
-        const auto result = updater.patchDay(request);
-
-        std::cout << "Patching " << result.instrument
-                  << " for UTC day " << format_utc_date(result.dayStartTimestampMs) << '\n';
-
-        for (const auto &patch : result.patches)
+        std::vector<TimeframePatchResult> aggregatePatches;
+        aggregatePatches.reserve(request.timeframes.size());
+        for (const auto timeframe : request.timeframes)
         {
-            std::cout << "  " << to_string(patch.timeframe)
-                      << " -> " << patch.filePath
-                      << " | fetched=" << patch.fetchedCount
-                      << " added=" << patch.addedCount
-                      << " replaced=" << patch.replacedCount
-                      << " total=" << patch.totalCount;
+            aggregatePatches.push_back(TimeframePatchResult{timeframe});
+        }
 
-            if (!patch.wroteFile)
-                std::cout << " | no file written";
+        for (auto dayTimestampMs = rangeStartTimestampMs;; dayTimestampMs += kUtcDayMs)
+        {
+            request.dayStartTimestampMs = dayTimestampMs;
+            const auto result = updater.patchDay(request);
 
-            std::cout << '\n';
+            std::cout << "Patching " << result.instrument
+                      << " for UTC day " << format_utc_date(result.dayStartTimestampMs) << '\n';
+
+            for (std::size_t index = 0; index < result.patches.size(); ++index)
+            {
+                const auto &patch = result.patches[index];
+                std::cout << "  " << to_string(patch.timeframe)
+                          << " -> " << patch.filePath
+                          << " | fetched=" << patch.fetchedCount
+                          << " added=" << patch.addedCount
+                          << " replaced=" << patch.replacedCount
+                          << " total=" << patch.totalCount;
+
+                if (!patch.wroteFile)
+                    std::cout << " | no file written";
+
+                std::cout << '\n';
+
+                auto &aggregate = aggregatePatches[index];
+                aggregate.filePath = patch.filePath;
+                aggregate.fetchedCount += patch.fetchedCount;
+                aggregate.addedCount += patch.addedCount;
+                aggregate.replacedCount += patch.replacedCount;
+                aggregate.totalCount = patch.totalCount;
+                aggregate.wroteFile = aggregate.wroteFile || patch.wroteFile;
+            }
+
+            if (dayTimestampMs == rangeEndTimestampMs)
+                break;
+        }
+
+        if (rangeStartTimestampMs != rangeEndTimestampMs)
+        {
+            std::cout << "Summary for UTC days "
+                      << format_utc_date(rangeStartTimestampMs)
+                      << " to "
+                      << format_utc_date(rangeEndTimestampMs)
+                      << '\n';
+
+            for (const auto &patch : aggregatePatches)
+            {
+                std::cout << "  " << to_string(patch.timeframe)
+                          << " -> " << patch.filePath
+                          << " | fetched=" << patch.fetchedCount
+                          << " added=" << patch.addedCount
+                          << " replaced=" << patch.replacedCount
+                          << " total=" << patch.totalCount;
+
+                if (!patch.wroteFile)
+                    std::cout << " | no file written";
+
+                std::cout << '\n';
+            }
         }
     }
     catch (const std::exception &e)

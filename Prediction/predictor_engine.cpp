@@ -131,7 +131,8 @@ bool PredictorEngine::bootstrap()
 {
     const auto intervalMs = static_cast<std::uint64_t>(candle_interval(m_config.timeframe).count());
     const auto upperBoundMs = latestAvailableUpperBoundMs(current_timestamp_ms());
-    const auto lookbackMs = intervalMs * static_cast<std::uint64_t>(m_config.bootstrapCandles);
+    const auto bootstrapCandles = std::max(m_config.bootstrapCandles, requiredHistoryCandles());
+    const auto lookbackMs = intervalMs * static_cast<std::uint64_t>(bootstrapCandles);
 
     const CandleFetchRequest request{
         m_config.instrument,
@@ -144,26 +145,29 @@ bool PredictorEngine::bootstrap()
     normalizeCandles(m_candles);
     trimHistory();
 
-    if (m_candles.size() < m_config.minimumCandles)
+    const auto requiredCandles = requiredHistoryCandles();
+    if (m_candles.size() < requiredCandles)
     {
         std::cerr << "Not enough candles returned from provider. Need at least "
-                  << m_config.minimumCandles << ", received " << m_candles.size() << ".\n";
+                  << requiredCandles << ", received " << m_candles.size() << ".\n";
         return false;
     }
 
     std::cout << "Loaded " << m_candles.size() << " candles for "
               << m_config.instrument << ' ' << to_string(m_config.timeframe)
-              << ". Latest closed candle: " << format_local_timestamp(m_candles.back().timestamp) << '\n';
+              << ". Latest closed candle: " << format_local_timestamp(m_candles.back().timestamp)
+              << " (required history: " << requiredCandles << " candles)\n";
 
     return true;
 }
 
 bool PredictorEngine::emitPrediction() const
 {
-    if (m_candles.size() < m_config.minimumCandles)
+    const auto requiredCandles = requiredHistoryCandles();
+    if (m_candles.size() < requiredCandles)
     {
         std::cerr << "Cannot predict yet; only " << m_candles.size()
-                  << " candles are available.\n";
+                  << " candles are available. Need at least " << requiredCandles << ".\n";
         return false;
     }
 
@@ -245,6 +249,15 @@ void PredictorEngine::trimHistory()
 
     m_candles.erase(m_candles.begin(),
                     m_candles.end() - static_cast<std::ptrdiff_t>(m_config.historyRetention));
+}
+
+std::size_t PredictorEngine::requiredHistoryCandles() const noexcept
+{
+    const auto indicatorMinimum = std::max<std::size_t>(
+        {static_cast<std::size_t>(kSma50Period),
+         static_cast<std::size_t>(kAdxWindow),
+         static_cast<std::size_t>(kReturnFeatureCount + 1)});
+    return std::max(m_config.minimumCandles, indicatorMinimum);
 }
 
 std::uint64_t PredictorEngine::latestAvailableUpperBoundMs(std::uint64_t nowTimestampMs) const

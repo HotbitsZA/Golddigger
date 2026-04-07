@@ -320,7 +320,7 @@ Default availability delay is `60` seconds.
 
 ### `patcher.bin`
 
-Fetches the previous completed UTC day of Dukascopy candles and merges them into the rolling CSV files in `Data/`.
+Fetches one or more completed UTC trading days of Dukascopy candles and merges them into the rolling CSV files in `Data/`.
 
 Default behavior:
 
@@ -334,6 +334,7 @@ Usage:
 ```bash
 ./patcher.bin
 ./patcher.bin --date 2026-03-31
+./patcher.bin --from 2026-04-01 --to 2026-04-06
 ./patcher.bin --timeframes m15,h1
 ./patcher.bin --dukascopy-command "npx dukascopy-node" --data-dir Data
 ```
@@ -341,6 +342,8 @@ Usage:
 Useful flags:
 
 - `--date YYYY-MM-DD`
+- `--from YYYY-MM-DD`
+- `--to YYYY-MM-DD`
 - `--instrument SYMBOL`
 - `--data-dir DIR`
 - `--timeframes m15,h1,d1`
@@ -351,6 +354,8 @@ Notes:
 - requests are formatted in UTC/GMT for Dukascopy
 - duplicate timestamps are avoided when patching
 - if a timestamp already exists in a CSV, the downloaded candle replaces that row
+- `--from` and `--to` patch an inclusive UTC date range, which is useful for catching up missed days
+- date flags accept both `YYYY-MM-DD` and `DD-MM-YYYY`
 - this is designed as a one-shot updater, so you can schedule it externally for `01:00 GMT`
 
 ## Typical Workflow

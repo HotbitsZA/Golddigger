@@ -120,11 +120,33 @@ std::string DailyCsvUpdater::defaultDataFilePath(
 
 bool parse_utc_date(const std::string &value, std::uint64_t &dayStartTimestampMs)
 {
-    int year = 0;
+    int first = 0;
     int month = 0;
-    int day = 0;
-    if (std::sscanf(value.c_str(), "%d-%d-%d", &year, &month, &day) != 3)
+    int third = 0;
+    char firstSeparator = '\0';
+    char secondSeparator = '\0';
+    if (std::sscanf(value.c_str(), "%d%c%d%c%d", &first, &firstSeparator, &month, &secondSeparator, &third) != 5)
         return false;
+
+    if ((firstSeparator != '-') || (secondSeparator != '-'))
+        return false;
+
+    int year = 0;
+    int day = 0;
+    if (first >= 1000)
+    {
+        year = first;
+        day = third;
+    }
+    else if (third >= 1000)
+    {
+        day = first;
+        year = third;
+    }
+    else
+    {
+        return false;
+    }
 
     if ((month < 1) || (month > 12))
         return false;
