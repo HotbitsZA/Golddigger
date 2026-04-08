@@ -335,6 +335,7 @@ Usage:
 ./patcher.bin
 ./patcher.bin --date 2026-03-31
 ./patcher.bin --from 2026-04-01 --to 2026-04-06
+./patcher.bin --from "2026-03-31 00:00" --to "2026-04-07 23:45" --timeframes m15
 ./patcher.bin --timeframes m15,h1
 ./patcher.bin --dukascopy-command "npx dukascopy-node" --data-dir Data
 ```
@@ -342,8 +343,8 @@ Usage:
 Useful flags:
 
 - `--date YYYY-MM-DD`
-- `--from YYYY-MM-DD`
-- `--to YYYY-MM-DD`
+- `--from YYYY-MM-DD[ HH:MM[:SS]]`
+- `--to YYYY-MM-DD[ HH:MM[:SS]]`
 - `--instrument SYMBOL`
 - `--data-dir DIR`
 - `--timeframes m15,h1,d1`
@@ -354,8 +355,9 @@ Notes:
 - requests are formatted in UTC/GMT for Dukascopy
 - duplicate timestamps are avoided when patching
 - if a timestamp already exists in a CSV, the downloaded candle replaces that row
-- `--from` and `--to` patch an inclusive UTC date range, which is useful for catching up missed days
-- date flags accept both `YYYY-MM-DD` and `DD-MM-YYYY`
+- `--from` and `--to` patch an inclusive UTC date range with one Dukascopy request per timeframe across the whole window, which is useful for catching up missed days without tripping over weekends or holidays
+- `--from` and `--to` also accept exact UTC datetimes; when a time is included, `--to` is treated as the last candle timestamp you want included
+- date flags accept both `YYYY-MM-DD` / `DD-MM-YYYY` and `YYYY-MM-DD HH:MM[:SS]` / `DD-MM-YYYY HH:MM[:SS]`
 - this is designed as a one-shot updater, so you can schedule it externally for `01:00 GMT`
 
 ## Typical Workflow

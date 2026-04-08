@@ -41,6 +41,14 @@ public:
     explicit DailyCsvUpdater(const ICandleDataProvider &provider);
 
     DailyPatchResult patchDay(const DailyPatchRequest &request) const;
+    DailyPatchResult patchRange(
+        const DailyPatchRequest &request,
+        std::uint64_t rangeEndDayStartTimestampMs) const;
+    DailyPatchResult patchWindow(
+        const DailyPatchRequest &request,
+        std::uint64_t windowStartTimestampMs,
+        std::uint64_t windowEndTimestampMs,
+        bool includeEndTimestamp) const;
 
     static std::string defaultDataFilePath(
         const std::string &dataDirectory,
@@ -52,5 +60,6 @@ private:
 };
 
 bool parse_utc_date(const std::string &value, std::uint64_t &dayStartTimestampMs);
+bool parse_utc_date_or_datetime(const std::string &value, std::uint64_t &timestampMs, bool &hasTimeComponent);
 std::uint64_t previous_utc_day_start_timestamp_ms();
 std::string format_utc_date(std::uint64_t dayStartTimestampMs);

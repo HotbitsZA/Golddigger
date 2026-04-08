@@ -7,10 +7,13 @@
 class DukascopyCliDataProvider final : public ICandleDataProvider
 {
 public:
-    explicit DukascopyCliDataProvider(std::string command = "npx dukascopy-node");
+    explicit DukascopyCliDataProvider(
+        std::string command = "npx dukascopy-node",
+        std::string debugDirectory = {});
 
     std::vector<Candle> fetchCandles(const CandleFetchRequest &request) const override;
 
 private:
     std::string m_command;
+    std::string m_debugDirectory;
 };
