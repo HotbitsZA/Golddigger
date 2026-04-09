@@ -18,7 +18,7 @@ void print_usage()
 {
     std::cout << "Usage: predictor [--model PATH] [--instrument SYMBOL] [--timeframe m15|h1|d1]\n"
               << "                 [--provider dukascopy|alphavantage]\n"
-              << "                 [--dukascopy-command CMD]\n"
+              << "                 [--dukascopy-command CMD] [--dukascopy-debug-dir DIR]\n"
               << "                 [--alpha-vantage-api-key KEY] [--alpha-vantage-base-url URL]\n"
               << "                 [--poll-seconds N] [--availability-delay-seconds N]\n"
               << "                 [--max-predictions N]\n";
@@ -29,7 +29,8 @@ int main(int argc, char *argv[])
 {
     PredictorConfig config;
     std::string providerName{"dukascopy"};
-    std::string dukascopyCommand{"npx dukascopy-node"};
+    std::string dukascopyCommand{"npx dukascopy-node -s"};
+    std::string dukascopyDebugDirectory;
     std::string alphaVantageApiKey;
     std::string alphaVantageBaseUrl{"https://www.alphavantage.co/query"};
     bool modelProvided = false;
@@ -86,6 +87,10 @@ int main(int argc, char *argv[])
         {
             dukascopyCommand = require_value("--dukascopy-command");
         }
+        else if (argument == "--dukascopy-debug-dir")
+        {
+            dukascopyDebugDirectory = require_value("--dukascopy-debug-dir");
+        }
         else if (argument == "--alpha-vantage-api-key")
         {
             alphaVantageApiKey = require_value("--alpha-vantage-api-key");
@@ -120,7 +125,7 @@ int main(int argc, char *argv[])
     std::unique_ptr<ICandleDataProvider> provider;
     if (providerName == "dukascopy")
     {
-        provider = std::make_unique<DukascopyCliDataProvider>(dukascopyCommand);
+        provider = std::make_unique<DukascopyCliDataProvider>(dukascopyCommand, dukascopyDebugDirectory);
     }
     else if (providerName == "alphavantage")
     {

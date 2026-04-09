@@ -29,6 +29,14 @@ Golddigger builds an SVR model on top of engineered candle features such as:
 - SMA spread
 - cyclical hour-of-day and day-of-week features
 
+The regression target is a signed best-horizon move measured from the current candle close:
+
+- `m15`: best move reached within the next `6` candles
+- `h1`: best move reached within the next `4` candles
+- `d1`: best move reached within the next `4` candles
+
+Features are still derived from candle closes. Labels use the future horizon's highest `high` and lowest `low`, then keep whichever log-return has the larger absolute magnitude. This makes the model learn entry points that lead into the strongest subsequent expansion rather than only the very next candle close.
+
 The training flow is:
 
 1. tune `C`, `epsilon-insensitivity`, and `gamma` with `tuner.bin`
@@ -210,7 +218,7 @@ Notes:
 
 ### `predictor`
 
-Loads a trained model, fetches live candles from a provider, keeps track of the next missing candle timestamp, and predicts the next candle after each newly completed candle becomes available.
+Loads a trained model, fetches live candles from a provider, keeps track of the next missing candle timestamp, and predicts the signed best move over the configured future horizon after each newly completed candle becomes available.
 
 Supported providers:
 

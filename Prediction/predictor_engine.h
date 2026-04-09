@@ -17,7 +17,7 @@ struct PredictorConfig
     std::size_t minimumCandles{50};
     std::size_t bootstrapCandles{64};
     std::size_t historyRetention{128};
-    std::chrono::seconds pollInterval{5};
+    std::chrono::seconds pollInterval{60};
     std::chrono::seconds availabilityDelay{60};
     std::size_t maxPredictions{0};
     double estimatedSpread{0.4};    //Broker spread can be around 0.2-0.3 for XAUUSD, adding some buffer for safety.

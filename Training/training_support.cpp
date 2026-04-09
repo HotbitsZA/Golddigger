@@ -14,7 +14,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-    constexpr std::size_t kMinCandlesForTraining = 51;
     constexpr std::size_t kTrainingStartIndex = 50;
     constexpr int kReturnFeatureCount = 5;
     constexpr int kRsiPeriod = 14;
@@ -24,6 +23,8 @@ namespace
     constexpr int kAdxWindow = 28;
     constexpr std::int64_t kHoursPerDay = 24;
     constexpr std::int64_t kDaysPerWeek = 7;
+    constexpr std::size_t kM15HorizonCandles = 6;
+    constexpr std::size_t kH1AndD1HorizonCandles = 4;
 
     std::string lower_copy(std::string value)
     {
@@ -64,6 +65,38 @@ namespace
 
         return normalized;
     }
+
+    std::size_t label_horizon_candles(const std::string &dataFile)
+    {
+        const auto timeframeTag = infer_timeframe_tag(dataFile);
+        if (timeframeTag == "m15")
+            return kM15HorizonCandles;
+
+        return kH1AndD1HorizonCandles;
+    }
+
+    double get_max_horizon_move(
+        const std::vector<Candle> &candles,
+        std::size_t entryIndex,
+        std::size_t horizonCandles)
+    {
+        const double entryClose = candles[entryIndex].close;
+        double highestHigh = candles[entryIndex + 1].high;
+        double lowestLow = candles[entryIndex + 1].low;
+
+        for (std::size_t offset = 1; offset <= horizonCandles; ++offset)
+        {
+            const Candle &futureCandle = candles[entryIndex + offset];
+            highestHigh = std::max(highestHigh, futureCandle.high);
+            lowestLow = std::min(lowestLow, futureCandle.low);
+        }
+
+        const double maxBullishMove = std::log(highestHigh / entryClose);
+        const double maxBearishMove = std::log(lowestLow / entryClose);
+        return (std::abs(maxBullishMove) >= std::abs(maxBearishMove))
+                   ? maxBullishMove
+                   : maxBearishMove;
+    }
 }
 
 TrainingHyperparameters default_training_hyperparameters()
@@ -79,13 +112,16 @@ TrainingDataset load_training_dataset(const std::string &dataFile)
     TrainingDataset dataset;
     dataset.candleCount = candles.size();
 
-    if (candles.size() < kMinCandlesForTraining)
-        throw std::runtime_error("Not enough candles in " + dataFile + ". Need at least 51.");
+    const auto horizonCandles = label_horizon_candles(dataFile);
+    const auto minCandlesForTraining = kTrainingStartIndex + horizonCandles + 1;
+    if (candles.size() < minCandlesForTraining)
+        throw std::runtime_error(
+            "Not enough candles in " + dataFile + ". Need at least " + std::to_string(minCandlesForTraining) + '.');
 
     dataset.samples.reserve(candles.size());
     dataset.labels.reserve(candles.size());
 
-    for (std::size_t i = kTrainingStartIndex; i < candles.size() - 1; ++i)
+    for (std::size_t i = kTrainingStartIndex; (i + horizonCandles) < candles.size(); ++i)
     {
         sample_type sample;
 
@@ -122,7 +158,7 @@ TrainingDataset load_training_dataset(const std::string &dataFile)
         sample(14) = std::cos(dayAngle);
 
         dataset.samples.push_back(sample);
-        dataset.labels.push_back(std::log(candles[i + 1].close / candles[i].close));
+        dataset.labels.push_back(get_max_horizon_move(candles, i, horizonCandles));
     }
 
     if (dataset.samples.empty())

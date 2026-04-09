@@ -35,12 +35,44 @@ namespace
         return escaped;
     }
 
-    std::string format_cli_timestamp(std::uint64_t timestampMs)
+    bool command_uses_explicit_utc(std::string command)
     {
-        // dukascopy-node interprets naive date strings in the process local timezone,
-        // so we must format the target UTC instant as local wall-clock time to keep
-        // the requested UTC interval aligned on non-UTC machines.
-        return format_local_timestamp(timestampMs).substr(0, 16);
+        std::transform(command.begin(), command.end(), command.begin(),
+                       [](unsigned char ch)
+                       {
+                           return static_cast<char>(std::tolower(ch));
+                       });
+
+        return (command.find("-tz utc") != std::string::npos) ||
+               (command.find("--time-zone utc") != std::string::npos) ||
+               (command.find("-utc 0") != std::string::npos) ||
+               (command.find("--utc-offset 0") != std::string::npos);
+    }
+
+    std::string format_cli_timestamp(std::uint64_t timestampMs, bool useUtc)
+    {
+        // dukascopy-node accepts naive date strings. When the command is configured with
+        // explicit UTC flags we can pass UTC wall-clock timestamps directly; otherwise
+        // we keep the previous local-time workaround for compatibility with patcher.
+        return (useUtc ? format_utc_timestamp(timestampMs) : format_local_timestamp(timestampMs)).substr(0, 16);
+    }
+
+    std::string build_command_text(const std::string &baseCommand, const CandleFetchRequest &request)
+    {
+        const bool useUtcInputTimestamps = command_uses_explicit_utc(baseCommand);
+        std::ostringstream command;
+        command << baseCommand
+                << " -i " << shell_quote(request.instrument)
+                << " -from " << shell_quote(format_cli_timestamp(request.fromTimestampMs, useUtcInputTimestamps))
+                << " -to " << shell_quote(format_cli_timestamp(request.toTimestampMs, useUtcInputTimestamps))
+                << " -t " << shell_quote(to_string(request.timeframe))
+                << " -f csv";
+
+        if (request.includeVolumes)
+            command << " --volumes";
+
+        command << " 2>&1";
+        return command.str();
     }
 
     std::string run_command(const std::string &command)
@@ -70,6 +102,23 @@ namespace
         }
 
         return output;
+    }
+
+    bool looks_like_node_heap_oom(const std::string &message)
+    {
+        return (message.find("heap out of memory") != std::string::npos) ||
+               (message.find("Allocation failed - JavaScript heap out of memory") != std::string::npos);
+    }
+
+    bool has_explicit_node_heap_limit(const std::string &command)
+    {
+        return (command.find("NODE_OPTIONS") != std::string::npos) ||
+               (command.find("max-old-space-size") != std::string::npos);
+    }
+
+    std::string with_node_heap_limit(const std::string &command, std::size_t megabytes)
+    {
+        return "NODE_OPTIONS=--max-old-space-size=" + std::to_string(megabytes) + ' ' + command;
     }
 
     std::string extract_json_payload(const std::string &output)
@@ -375,23 +424,34 @@ DukascopyCliDataProvider::DukascopyCliDataProvider(std::string command, std::str
 {
 }
 
+std::chrono::milliseconds DukascopyCliDataProvider::livePublicationInterval(CandleTimeframe timeframe) const
+{
+    if (timeframe == CandleTimeframe::M15)
+        return std::chrono::hours{1};
+
+    return candle_interval(timeframe);
+}
+
+std::string DukascopyCliDataProvider::describeRequest(const CandleFetchRequest &request) const
+{
+    return build_command_text(m_command, request);
+}
+
 std::vector<Candle> DukascopyCliDataProvider::fetchCandles(const CandleFetchRequest &request) const
 {
-    std::ostringstream command;
-    command << m_command
-            << " -i " << shell_quote(request.instrument)
-            << " -from " << shell_quote(format_cli_timestamp(request.fromTimestampMs))
-            << " -to " << shell_quote(format_cli_timestamp(request.toTimestampMs))
-            << " -t " << shell_quote(to_string(request.timeframe))
-            << " -f json";
+    const auto commandText = build_command_text(m_command, request);
+    std::string output;
+    try
+    {
+        output = run_command(commandText);
+    }
+    catch (const std::exception &commandError)
+    {
+        if (!looks_like_node_heap_oom(commandError.what()) || has_explicit_node_heap_limit(commandText))
+            throw;
 
-    if (request.includeVolumes)
-        command << " --volumes";
-
-    command << " 2>&1";
-
-    const auto commandText = command.str();
-    const auto output = run_command(commandText);
+        output = run_command(with_node_heap_limit(commandText, 4096));
+    }
     std::optional<fs::path> debugPath;
     if (!m_debugDirectory.empty())
         debugPath = write_debug_output(m_debugDirectory, request, commandText, output);
