@@ -9,13 +9,16 @@ It currently supports:
 - daily patching of rolling Dukascopy candle CSV files
 - live prediction from Dukascopy CLI candle data
 - live prediction from Alpha Vantage `FX_INTRADAY`
+- live prediction from MetaTrader 5 over ZeroMQ
+- MetaTrader 5 ZeroMQ command exchange for heartbeat, spread, live data, and trade execution
 
-The project builds four binaries in the project root:
+The project builds five binaries in the project root:
 
 - `trainer`
 - `predictor`
 - `tuner.bin`
 - `patcher.bin`
+- `mt5_gateway`
 
 ## What It Does
 
@@ -55,8 +58,10 @@ Build/runtime dependencies used by the current codebase:
 - [dlib](https://dlib.net/)
 - `nlohmann-json`
 - libcurl
+- libzmq / ZeroMQ
 - Node.js and `npx` if you want to use the Dukascopy provider
 - an Alpha Vantage API key if you want to use the Alpha Vantage provider
+- MetaTrader 5 plus an EA speaking the Golddigger ZeroMQ protocol if you want to use the MT5 provider
 
 This project also depends on local code from your HotBits repo:
 
@@ -82,6 +87,7 @@ On macOS, the current project configuration already looks for Homebrew installs 
 
 ```bash
 brew install nlohmann-json dlib curl
+brew install zeromq
 ```
 
 ## Build
@@ -100,6 +106,7 @@ Executables are written to the project root:
 ./predictor
 ./tuner.bin
 ./patcher.bin
+./mt5_gateway
 ```
 
 ## Data Files
@@ -224,6 +231,7 @@ Supported providers:
 
 - `dukascopy`
 - `alphavantage`
+- `mt5`
 
 General usage:
 
@@ -233,7 +241,7 @@ General usage:
 
 Useful flags:
 
-- `--provider dukascopy|alphavantage`
+- `--provider dukascopy|alphavantage|mt5`
 - `--model PATH`
 - `--instrument SYMBOL`
 - `--timeframe m15|h1|d1`
@@ -248,6 +256,11 @@ Provider-specific flags:
 - Alpha Vantage:
   `--alpha-vantage-api-key KEY`
   `--alpha-vantage-base-url URL`
+- MT5 ZeroMQ:
+  `--mt5-endpoint tcp://HOST:PORT`
+  `--mt5-client-id ID`
+  `--mt5-send-timeout-ms N`
+  `--mt5-receive-timeout-ms N`
 
 ### Predictor With Dukascopy
 
@@ -305,6 +318,104 @@ Current Alpha Vantage limitations:
 - supports `m15` and `h1`
 - `d1` is not supported through the current Alpha Vantage provider
 - volume is not provided by the API, so predictor uses `0.0` for volume on that provider
+
+### Predictor With MT5 ZeroMQ
+
+Example:
+
+```bash
+./predictor \
+  --provider mt5 \
+  --mt5-endpoint tcp://192.168.1.50:5555 \
+  --mt5-client-id golddigger-mac \
+  --model Models/xauusd-m15-bid.dat \
+  --instrument xauusd \
+  --timeframe m15
+```
+
+The MT5 provider uses JSON request/response envelopes over a ZeroMQ `REQ/REP` link.
+
+Request envelope:
+
+```json
+{
+  "protocol": "golddigger.mt5.zmq",
+  "version": 1,
+  "type": "request",
+  "request_id": "gd-1776355200000-0",
+  "client_id": "golddigger-mac",
+  "sent_at_utc_ms": 1776355200000,
+  "command": "GET_LIVE_DATA",
+  "payload": {
+    "instrument": "xauusd",
+    "timeframe": "m15",
+    "from_timestamp_ms": 1776351600000,
+    "to_timestamp_ms": 1776355200000,
+    "include_volumes": true
+  }
+}
+```
+
+Response envelope:
+
+```json
+{
+  "protocol": "golddigger.mt5.zmq",
+  "version": 1,
+  "type": "response",
+  "request_id": "gd-1776355200000-0",
+  "command": "GET_LIVE_DATA",
+  "status": "OK",
+  "payload": {
+    "instrument": "XAUUSD",
+    "timeframe": "m15",
+    "candles": [
+      {
+        "timestamp_ms": 1776354300000,
+        "open": 4821.10,
+        "high": 4823.00,
+        "low": 4819.80,
+        "close": 4820.15,
+        "volume": 1234.0
+      }
+    ]
+  }
+}
+```
+
+Supported MT5 commands on the Golddigger side:
+
+- `PING`
+- `GET_SPREAD`
+- `GET_LIVE_DATA`
+- `BUY`
+- `SELL`
+- `CLOSE_ALL`
+
+Trade execution payloads use:
+
+- `instrument`
+- `volume_lots`
+- optional `stop_loss`
+- optional `take_profit`
+- optional `price`
+- `deviation_points`
+- `magic`
+- `comment`
+
+### `mt5_gateway`
+
+`mt5_gateway` is a small CLI for exercising the MT5 ZeroMQ contract before wiring in automation.
+
+Examples:
+
+```bash
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 PING
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 GET_SPREAD --instrument xauusd
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 GET_LIVE_DATA --instrument xauusd --timeframe m15 --from-local "2026-04-17 08:00" --to-local "2026-04-17 10:00"
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 BUY --instrument xauusd --volume 0.10 --sl 4800 --tp 4850 --magic 20260417 --comment "golddigger-test"
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 CLOSE_ALL --instrument xauusd --magic 20260417
+```
 
 ## Live Prediction Timing
 
@@ -407,10 +518,12 @@ Notes:
 ├── DataUpdate/
 ├── Indicators/
 ├── MarketData/
+├── MT5/
 ├── Models/
 ├── Prediction/
 ├── Training/
 ├── Utils/
+├── mt5_gateway.cpp
 ├── patcher.cpp
 ├── predictor.cpp
 ├── trainer.cpp

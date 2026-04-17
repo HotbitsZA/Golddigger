@@ -16,10 +16,32 @@ find_package(nlohmann_json CONFIG REQUIRED
         /opt/homebrew/Cellar/nlohmann-json/3.12.0
 )
 find_package(CURL REQUIRED)
+find_path(ZMQ_INCLUDE_DIR
+    NAMES zmq.h
+    HINTS
+        /opt/homebrew/include
+        /usr/local/include
+)
+find_library(ZMQ_LIBRARY
+    NAMES zmq libzmq
+    HINTS
+        /opt/homebrew/lib
+        /usr/local/lib
+)
 
 if(NOT EXISTS "${THREAD_COMPONENT_DIR}/cBaseWorker_V2.h")
     message(FATAL_ERROR "cBaseWorker_V2.h was not found in ${THREAD_COMPONENT_DIR}")
 endif()
+
+if(NOT ZMQ_INCLUDE_DIR OR NOT ZMQ_LIBRARY)
+    message(FATAL_ERROR "libzmq was not found. Install ZeroMQ headers and library before building MT5 integration.")
+endif()
+
+add_library(ZeroMQ::libzmq UNKNOWN IMPORTED)
+set_target_properties(ZeroMQ::libzmq PROPERTIES
+    IMPORTED_LOCATION "${ZMQ_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${ZMQ_INCLUDE_DIR}"
+)
 
 add_library(golddigger_common
     Indicators/indicators.cpp
@@ -64,10 +86,27 @@ target_link_libraries(golddigger_http
         CURL::libcurl
 )
 
+add_library(golddigger_mt5
+    MT5/mt5_protocol.cpp
+    MT5/mt5_zeromq_client.cpp
+)
+
+target_include_directories(golddigger_mt5
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_link_libraries(golddigger_mt5
+    PUBLIC
+        nlohmann_json::nlohmann_json
+        ZeroMQ::libzmq
+)
+
 add_library(golddigger_market_data
     MarketData/alpha_vantage_fx_provider.cpp
     MarketData/candle_data_provider.cpp
     MarketData/dukascopy_cli_provider.cpp
+    MarketData/mt5_zeromq_provider.cpp
 )
 
 target_include_directories(golddigger_market_data
@@ -78,6 +117,7 @@ target_include_directories(golddigger_market_data
 target_link_libraries(golddigger_market_data
     PUBLIC
         golddigger_http
+        golddigger_mt5
         nlohmann_json::nlohmann_json
 )
 
@@ -167,4 +207,13 @@ set_target_properties(patcher PROPERTIES
 target_link_libraries(patcher
     PRIVATE
         golddigger_data_update
+)
+
+add_executable(mt5_gateway
+    mt5_gateway.cpp
+)
+
+target_link_libraries(mt5_gateway
+    PRIVATE
+        golddigger_market_data
 )

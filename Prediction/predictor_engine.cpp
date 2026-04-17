@@ -315,14 +315,16 @@ bool PredictorEngine::bootstrap()
             if (m_candles.size() < requiredCandles)
                 throw;
 
-            std::cerr << "Warning: recent Dukascopy overlay failed during bootstrap, continuing with cached data: "
+            std::cerr << "Warning: recent " << m_provider->providerName()
+                      << " overlay failed during bootstrap, continuing with cached data: "
                       << e.what() << '\n';
         }
 
         if (m_candles.size() < requiredCandles)
         {
             auto lookbackCandles = std::max(m_config.bootstrapCandles, requiredCandles * 2);
-            std::cout << "Cached history is insufficient; requesting additional live history from Dukascopy...\n";
+            std::cout << "Cached history is insufficient; requesting additional live history from "
+                      << m_provider->providerName() << "...\n";
             for (std::size_t attempt = 0; attempt < kMaxBootstrapExpansionAttempts; ++attempt)
             {
                 const auto lookbackMs = intervalMs * static_cast<std::uint64_t>(lookbackCandles);
@@ -380,11 +382,11 @@ bool PredictorEngine::bootstrap()
     const auto latestCandleEndMs = latestCandleStartMs + intervalMs;
     std::string sourceSummary;
     if (usedCachedHistory && overlayApplied)
-        sourceSummary = " (cache + Dukascopy overlay)";
+        sourceSummary = " (cache + " + m_provider->providerName() + " overlay)";
     else if (usedCachedHistory)
         sourceSummary = " (cache)";
     else if (overlayApplied)
-        sourceSummary = " (Dukascopy)";
+        sourceSummary = " (" + m_provider->providerName() + ")";
     std::cout << "Loaded " << m_candles.size() << " candles for "
               << m_config.instrument << ' ' << to_string(m_config.timeframe)
               << sourceSummary

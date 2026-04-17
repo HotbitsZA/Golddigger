@@ -35,6 +35,10 @@ public:
     virtual ~ICandleDataProvider() = default;
 
     virtual std::vector<Candle> fetchCandles(const CandleFetchRequest &request) const = 0;
+    virtual std::string providerName() const
+    {
+        return "Provider";
+    }
 
     virtual std::string describeRequest(const CandleFetchRequest &request) const
     {
