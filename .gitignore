@@ -3,9 +3,18 @@
 build/
 cmake-build-*/
 
+# Built binaries now land in build/bin but keep legacy roots ignored too.
 predictor
 trainer
 patcher.bin
 tuner.bin
+mt5_gateway
+validate.bin
+golddigger_tests
+
+# Runtime artifacts
+Models/
+download/
+*.dat
 
 *.dSYM/

@@ -149,15 +149,8 @@ void TrainerWorker::run()
             }
         }
 
-        std::cout << "Sample 0: " << dlib::trans(samples[0]) << std::endl;
-        std::cout << "Sample 100: " << dlib::trans(samples[99]) << std::endl;
-        std::set<double> unique_labels(dataset.labels.begin(), dataset.labels.end());
-        std::cout << "Unique labels count: " << unique_labels.size() << std::endl;
-
         dlib::decision_function<kernel_type> decisionFunction = trainer.train(samples, dataset.labels);
-        // Immediately check the size here
-        long sv_count = decisionFunction.basis_vectors.size();
-        std::cout << "SV Count immediately after train: " << sv_count << std::endl;
+        const long svCount = decisionFunction.basis_vectors.size();
 
         if (!continueRunning())
         {
@@ -174,7 +167,7 @@ void TrainerWorker::run()
                          " using C=" + std::to_string(parameters.c) +
                          ", epsilon_insensitivity=" + std::to_string(parameters.epsilon) +
                          ", gamma=" + std::to_string(parameters.gamma) +
-                         ", Support Vectors=" + std::to_string(decisionFunction.basis_vectors.size()); // Nearly equal to the number of samples=overfitting, < 100=underfitting.
+                         ", Support Vectors=" + std::to_string(svCount); // Nearly equal to the number of samples=overfitting, < 100=underfitting.
 
         dlib::serialize(m_modelFile) << decisionFunction << normalizer;
         updateHeartbeat();

@@ -1,5 +1,6 @@
 #include "Training/training_support.h"
 
+#include "Features/feature_builder.h"
 #include "Utils/utils.h"
 
 #include <algorithm>
@@ -14,18 +15,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-    constexpr std::size_t kTrainingStartIndex = 50;
-    constexpr int kReturnFeatureCount = 5;
-    constexpr int kRsiPeriod = 14;
-    constexpr int kSma20Period = 20;
-    constexpr int kSma50Period = 50;
-    constexpr int kAdxPeriod = 14;
-    constexpr int kAdxWindow = 28;
-    constexpr std::int64_t kHoursPerDay = 24;
-    constexpr std::int64_t kDaysPerWeek = 7;
-    constexpr std::size_t kM15HorizonCandles = 6;
-    constexpr std::size_t kH1AndD1HorizonCandles = 4;
-
     std::string lower_copy(std::string value)
     {
         std::transform(value.begin(), value.end(), value.begin(),
@@ -40,18 +29,6 @@ namespace
     {
         const auto stem = fs::path(path).stem().string();
         return stem.empty() ? fallback : stem;
-    }
-
-    std::pair<double, double> cyclical_time_features(std::uint64_t timestampMs)
-    {
-        const auto timePoint = std::chrono::system_clock::time_point(std::chrono::milliseconds(timestampMs));
-        const auto hoursSinceEpoch = std::chrono::duration_cast<std::chrono::hours>(
-                                         timePoint.time_since_epoch())
-                                         .count();
-
-        const auto hourOfDay = static_cast<double>(hoursSinceEpoch % kHoursPerDay);
-        const auto dayOfWeek = static_cast<double>((hoursSinceEpoch / kHoursPerDay) % kDaysPerWeek);
-        return {hourOfDay, dayOfWeek};
     }
 
     std::string infer_timeframe_tag(const std::string &dataFile)
@@ -70,9 +47,9 @@ namespace
     {
         const auto timeframeTag = infer_timeframe_tag(dataFile);
         if (timeframeTag == "m15")
-            return kM15HorizonCandles;
+            return feature_builder::kM15HorizonCandles;
 
-        return kH1AndD1HorizonCandles;
+        return feature_builder::kDefaultHorizonCandles;
     }
 
     double get_max_horizon_move(
@@ -113,7 +90,7 @@ TrainingDataset load_training_dataset(const std::string &dataFile)
     dataset.candleCount = candles.size();
 
     const auto horizonCandles = label_horizon_candles(dataFile);
-    const auto minCandlesForTraining = kTrainingStartIndex + horizonCandles + 1;
+    const auto minCandlesForTraining = feature_builder::kFeatureStartIndex + horizonCandles + 1;
     if (candles.size() < minCandlesForTraining)
         throw std::runtime_error(
             "Not enough candles in " + dataFile + ". Need at least " + std::to_string(minCandlesForTraining) + '.');
@@ -121,43 +98,9 @@ TrainingDataset load_training_dataset(const std::string &dataFile)
     dataset.samples.reserve(candles.size());
     dataset.labels.reserve(candles.size());
 
-    for (std::size_t i = kTrainingStartIndex; (i + horizonCandles) < candles.size(); ++i)
+    for (std::size_t i = feature_builder::kFeatureStartIndex; (i + horizonCandles) < candles.size(); ++i)
     {
-        sample_type sample;
-
-        for (int j = 0; j < kReturnFeatureCount; ++j)
-            sample(j) = std::log(candles[i - j].close / candles[i - j - 1].close);
-
-        std::vector<double> closes;
-        closes.reserve(kSma50Period + 1);
-        for (std::size_t k = i - kSma50Period; k <= i; ++k)
-            closes.push_back(candles[k].close);
-
-        sample(5) = get_rsi(closes, kRsiPeriod);
-
-        std::vector<Candle> adxCandles(candles.begin() + static_cast<std::ptrdiff_t>(i - kAdxWindow),
-                                       candles.begin() + static_cast<std::ptrdiff_t>(i));
-        sample(6) = calculate_adx(adxCandles, kAdxPeriod);
-
-        const double rawAtr = get_atr(adxCandles, kAdxPeriod);
-        sample(7) = (rawAtr > 0.0) ? (rawAtr / candles[i].close) : 0.0;
-
-        const double rawSma20 = get_sma(closes, kSma20Period);
-        sample(8) = (rawSma20 > 0.0) ? ((candles[i].close - rawSma20) / candles[i].close) : 0.0;
-
-        const double rawSma50 = get_sma(closes, kSma50Period);
-        sample(9) = (rawSma50 > 0.0) ? ((candles[i].close - rawSma50) / candles[i].close) : 0.0;
-        sample(10) = (rawSma50 > 0.0) ? (rawSma20 - rawSma50) / candles[i].close : 0.0;
-
-        const auto [hourOfDay, dayOfWeek] = cyclical_time_features(candles[i].timestamp);
-        const double hourAngle = (2 * M_PI * hourOfDay) / 24.0;
-        const double dayAngle = (2 * M_PI * dayOfWeek) / 7.0;
-        sample(11) = std::sin(hourAngle);
-        sample(12) = std::cos(hourAngle);
-        sample(13) = std::sin(dayAngle);
-        sample(14) = std::cos(dayAngle);
-
-        dataset.samples.push_back(sample);
+        dataset.samples.push_back(feature_builder::build_feature_sample(candles, i));
         dataset.labels.push_back(get_max_horizon_move(candles, i, horizonCandles));
     }
 
