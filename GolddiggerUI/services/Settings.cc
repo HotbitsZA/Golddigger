@@ -212,7 +212,7 @@ namespace golddiggerui
     if (patch.contains("confirmLive") && patch["confirmLive"].is_boolean())
       liveAuthorised = patch["confirmLive"].get<bool>();
 
-    if (!paperTrading && !liveAuthorised)
+    if (previous.paperTrading && !paperTrading && !liveAuthorised)
       throw std::invalid_argument(
           "live trading is disabled: send confirmLive=true after confirming the venue");
 

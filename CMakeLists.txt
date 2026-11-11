@@ -38,6 +38,7 @@ find_package(CURL REQUIRED)
 
 option(GOLDDIGGER_BUILD_FULL "Build the full pipeline (workers, market data, MT5, CLI tools)" ON)
 option(GOLDDIGGER_BUILD_TESTS "Build the unit tests" ON)
+option(GOLDDIGGER_BUILD_UI "Build the Golddigger web UI (requires Drogon)" ON)
 
 add_library(golddigger_common
     Features/feature_builder.cpp
@@ -266,6 +267,19 @@ if(GOLDDIGGER_BUILD_FULL)
     )
 else()
     message(STATUS "GOLDDIGGER_BUILD_FULL=OFF: skipping workers, market data, MT5 and CLI tools (tests only).")
+endif()
+
+# The web cockpit. It reuses golddigger_prediction and the other libraries
+# above, so build it from here whenever the full pipeline is available. Drogon
+# is optional: without it the rest of Golddigger still builds.
+if(GOLDDIGGER_BUILD_FULL AND GOLDDIGGER_BUILD_UI)
+    find_package(Drogon CONFIG QUIET)
+    if(TARGET Drogon::Drogon)
+        message(STATUS "GolddiggerUI: building the web UI")
+        add_subdirectory(GolddiggerUI)
+    else()
+        message(STATUS "GolddiggerUI: Drogon was not found, skipping the web UI")
+    endif()
 endif()
 
 if(GOLDDIGGER_BUILD_TESTS)

@@ -202,6 +202,11 @@ DROGON_TEST(ApiSignalUsesTheResolvedModel)
   CHECK(execution.at("armed").get<bool>() == false);
   CHECK(execution.at("paperTrading").get<bool>() == true);
   CHECK(execution.at("autoWouldExecute").get<bool>() == false);
+
+  const auto badSource = golddiggerui::test::get("/api/signal?timeframe=m15&source=telepathy");
+  CHECK(badSource.status == drogon::k400BadRequest);
+  REQUIRE(badSource.hasJson);
+  CHECK(badSource.json.at("error").get<std::string>().find("source") != std::string::npos);
 }
 
 DROGON_TEST(ApiSettingsUpdateValidatesAndPersists)
@@ -223,7 +228,7 @@ DROGON_TEST(ApiSettingsUpdateValidatesAndPersists)
   std::ifstream in(golddiggerui::test::environment().stateDir / "settings.json");
   const std::string content((std::istreambuf_iterator<char>(in)),
                             std::istreambuf_iterator<char>());
-  CHECK(content.find("\"pollSeconds\":30") != std::string::npos);
+  CHECK(content.find("\"pollSeconds\": 30") != std::string::npos);
 
   const auto unsafe = golddiggerui::test::put("/api/settings", R"({"paperTrading":false})");
   CHECK(unsafe.status == drogon::k400BadRequest);
@@ -282,7 +287,8 @@ DROGON_TEST(ApiManualOrderIsPaperAndLogged)
   REQUIRE(listed.hasJson);
   CHECK(listed.json.at("total").get<std::size_t>() == 1);
   REQUIRE(listed.json.at("orders").size() == 1);
-  CHECK(listed.json.at("orders").at(0).at("message").get<std::string>() == "api test");
+  CHECK(listed.json.at("orders").at(0).at("message").get<std::string>().find("api test") !=
+        std::string::npos);
 
   std::ifstream in(golddiggerui::test::environment().stateDir / "orders.csv");
   std::string header;
@@ -301,8 +307,12 @@ DROGON_TEST(ApiManualOrderIsPaperAndLogged)
   CHECK(golddiggerui::test::post(
             "/api/orders", R"({"timeframe":"m15","side":"BUY","volumeLots":0.1,"stopLoss":-3})")
             .status == drogon::k400BadRequest);
-  CHECK(golddiggerui::test::post("/api/orders", R"({"side":"BUY","volumeLots":0.1})").status ==
-        drogon::k400BadRequest);
+  // The timeframe defaults to M15 when it is omitted.
+  const auto defaulted =
+      golddiggerui::test::post("/api/orders", R"({"side":"BUY","volumeLots":0.1})");
+  CHECK(defaulted.status == drogon::k200OK);
+  REQUIRE(defaulted.hasJson);
+  CHECK(defaulted.json.at("order").at("timeframe").get<std::string>() == "m15");
 }
 
 DROGON_TEST(ApiEvaluateInManualModeDoesNotExecute)

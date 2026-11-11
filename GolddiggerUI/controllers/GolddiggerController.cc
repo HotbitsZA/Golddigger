@@ -474,7 +474,10 @@ namespace golddiggerui
             {
       auto &registry = services();
       const CandleTimeframe timeframe = timeframeFrom(req, json::object());
-      const std::string source = req->getParameter("source");
+      std::string source = req->getParameter("source");
+      source = lowerCopy(source);
+      if (!source.empty() && source != "file" && source != "live" && source != "auto")
+        throw std::invalid_argument("'source' has to be file, live or auto");
       const auto result = registry.trading->signal(timeframe, source);
       callback(jsonResponse(result.toJson())); });
   }

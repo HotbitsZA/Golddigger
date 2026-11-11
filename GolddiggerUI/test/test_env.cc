@@ -99,7 +99,7 @@ namespace golddiggerui::test
 
     /// A deterministic 140 candle series that ends `ageIntervals` intervals
     /// before now. The newest candle is complete, so ageIntervals 1 is fresh.
-    std::vector<Candle> makeCandles(const std::string &timeframe, int ageIntervals)
+    std::vector<Candle> makeCandles(const std::string &timeframe, int ageIntervals, int count = 140)
     {
       const auto interval = intervalOf(timeframe);
       const auto intervalMs = static_cast<std::uint64_t>(interval.count());
@@ -109,13 +109,13 @@ namespace golddiggerui::test
               .count());
 
       std::vector<Candle> candles;
-      candles.reserve(140);
+      candles.reserve(static_cast<std::size_t>(count));
       const std::uint64_t newest = now - intervalMs * static_cast<std::uint64_t>(ageIntervals);
 
-      for (int i = 0; i < 140; ++i)
+      for (int i = 0; i < count; ++i)
       {
         Candle candle;
-        candle.timestamp = newest - intervalMs * static_cast<std::uint64_t>(139 - i);
+        candle.timestamp = newest - intervalMs * static_cast<std::uint64_t>(count - 1 - i);
         const double base = 2000.0 + static_cast<double>(i) * 0.1 +
                             2.0 * std::sin(static_cast<double>(i) * 0.3);
         candle.open = base;
@@ -296,8 +296,9 @@ namespace golddiggerui::test
     // MarketDataService even on a file system with a coarse timestamp.
     if (ageIntervals <= 0)
       ageIntervals = 1;
+    const int count = ageIntervals > 1 ? 141 : 140;
     const auto path = g_environment.dataDir / ("xauusd-" + timeframe + "-bid.csv");
-    const auto candles = makeCandles(timeframe, ageIntervals);
+    const auto candles = makeCandles(timeframe, ageIntervals, count);
 
     std::ofstream out(path, std::ios::trunc);
     if (!out)
@@ -309,9 +310,6 @@ namespace golddiggerui::test
       out << candle.timestamp << ',' << candle.open << ',' << candle.high << ','
           << candle.low << ',' << candle.close << ',' << candle.volume << '\n';
     }
-    // A comment row is not valid candle data and is skipped by the reader. It
-    // only exists to guarantee a different file size than the previous write.
-    out << "# rewritten by the test fixture\n";
   }
 
   void writeFreshCandles()

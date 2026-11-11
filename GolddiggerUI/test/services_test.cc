@@ -28,7 +28,7 @@ namespace
 {
   namespace fs = std::filesystem;
 
-  AppPaths makePaths(const fs::path &root)
+  golddiggerui::AppPaths makePaths(const fs::path &root)
   {
     std::error_code ec;
     fs::create_directories(root / "Data", ec);
@@ -76,10 +76,10 @@ DROGON_TEST(ModelResolutionPrefersCanonicalName)
   touch(dir.path() / "Models" / "xauusd-h1-bid.dat");
 
   const golddiggerui::ModelService models(paths);
-  const auto resolved = models.resolve(golddiggerui::CandleTimeframe::H1, "xauusd");
+  const auto resolved = models.resolve(CandleTimeframe::H1, "xauusd");
 
   CHECK(fs::path(resolved).filename() == "xauusd-h1-bid.dat");
-  CHECK(models.hasModel(golddiggerui::CandleTimeframe::H1, "xauusd"));
+  CHECK(models.hasModel(CandleTimeframe::H1, "xauusd"));
 }
 
 DROGON_TEST(ModelResolutionFallsBackToNewestTaggedFile)
@@ -94,7 +94,7 @@ DROGON_TEST(ModelResolutionFallsBackToNewestTaggedFile)
   fs::last_write_time(older, fs::file_time_type::clock::now() - std::chrono::hours(2));
 
   const golddiggerui::ModelService models(paths);
-  const auto resolved = models.resolve(golddiggerui::CandleTimeframe::M15, "xauusd");
+  const auto resolved = models.resolve(CandleTimeframe::M15, "xauusd");
 
   CHECK(fs::path(resolved).filename() == "renamed-m15-new.dat");
 }
@@ -117,7 +117,7 @@ DROGON_TEST(ModelListSkipsTunerFiles)
 
   // A tuner file must never be selected, even when it is the only .dat file
   // with this timeframe in its name.
-  const auto resolved = models.resolve(golddiggerui::CandleTimeframe::M15, "xauusd");
+  const auto resolved = models.resolve(CandleTimeframe::M15, "xauusd");
   CHECK(fs::path(resolved).filename() == "xauusd-m15-bid.dat");
 }
 
@@ -128,15 +128,15 @@ DROGON_TEST(MarketDataReadsNewestCandles)
   std::ofstream(dir.path() / "Data" / "xauusd-m15-bid.csv", std::ios::trunc) << candleCsv;
 
   const golddiggerui::MarketDataService market(paths);
-  CHECK(market.hasData(golddiggerui::CandleTimeframe::M15, "xauusd"));
-  CHECK(market.dataPath(golddiggerui::CandleTimeframe::M15, "xauusd") ==
+  CHECK(market.hasData(CandleTimeframe::M15, "xauusd"));
+  CHECK(market.dataPath(CandleTimeframe::M15, "xauusd") ==
         (dir.path() / "Data" / "xauusd-m15-bid.csv").string());
 
-  const auto all = market.allCandles(golddiggerui::CandleTimeframe::M15, "xauusd");
+  const auto all = market.allCandles(CandleTimeframe::M15, "xauusd");
   REQUIRE(all != nullptr);
   CHECK(all->size() == 3);
 
-  const auto recent = market.recentCandles(golddiggerui::CandleTimeframe::M15, "xauusd", 2);
+  const auto recent = market.recentCandles(CandleTimeframe::M15, "xauusd", 2);
   REQUIRE(recent.size() == 2);
   CHECK(recent.front().timestamp == 1700000900000ULL);
   CHECK(recent.back().timestamp == 1700001800000ULL);
@@ -174,6 +174,12 @@ DROGON_TEST(SettingsRejectUnsafeLiveSwitch)
   // And the live switch has to survive a fresh store.
   golddiggerui::SettingsStore reloaded(paths.settingsFile);
   CHECK(reloaded.get().paperTrading == false);
+
+  // Editing another field while live is already on does not need the
+  // confirmation again: there is no new transition from paper to live.
+  const auto edited = store.update(nlohmann::json{{"volumeLots", 0.2}}, false);
+  CHECK(edited.paperTrading == false);
+  CHECK(std::abs(edited.volumeLots - 0.2) < 1e-9);
 }
 
 DROGON_TEST(SettingsValidateAndPersist)
@@ -232,11 +238,11 @@ DROGON_TEST(ModelPredictProducesBuySignal)
   auto &registry = golddiggerui::services();
 
   const auto candles =
-      registry.market->recentCandles(golddiggerui::CandleTimeframe::M15, "xauusd", 96);
+      registry.market->recentCandles(CandleTimeframe::M15, "xauusd", 96);
   REQUIRE(candles.size() == 96);
 
   const auto result =
-      registry.models->predict(golddiggerui::CandleTimeframe::M15, "xauusd", candles, 0.4);
+      registry.models->predict(CandleTimeframe::M15, "xauusd", candles, 0.4);
 
   REQUIRE(result.available);
   CHECK(result.action == "BUY");
@@ -251,13 +257,13 @@ DROGON_TEST(TradingRejectsBadOrderInput)
   golddiggerui::test::resetState();
   auto &trading = *golddiggerui::services().trading;
 
-  CHECK_THROWS_AS(trading.placeOrder(golddiggerui::CandleTimeframe::M15, "HOLD", 0.1, 2000.0,
+  CHECK_THROWS_AS(trading.placeOrder(CandleTimeframe::M15, "HOLD", 0.1, 2000.0,
                                      0.0, 0.0, false, nullptr, "test"),
                   std::invalid_argument);
-  CHECK_THROWS_AS(trading.placeOrder(golddiggerui::CandleTimeframe::M15, "BUY", -1.0, 2000.0,
+  CHECK_THROWS_AS(trading.placeOrder(CandleTimeframe::M15, "BUY", -1.0, 2000.0,
                                      0.0, 0.0, false, nullptr, "test"),
                   std::invalid_argument);
-  CHECK_THROWS_AS(trading.placeOrder(golddiggerui::CandleTimeframe::M15, "BUY", 0.1, 2000.0,
+  CHECK_THROWS_AS(trading.placeOrder(CandleTimeframe::M15, "BUY", 0.1, 2000.0,
                                      -1.0, 0.0, false, nullptr, "test"),
                   std::invalid_argument);
 }
@@ -267,7 +273,7 @@ DROGON_TEST(TradingLogsPaperOrder)
   golddiggerui::test::resetState();
   auto &trading = *golddiggerui::services().trading;
 
-  const auto order = trading.placeOrder(golddiggerui::CandleTimeframe::M15, "buy", 0.25, 2100.5,
+  const auto order = trading.placeOrder(CandleTimeframe::M15, "buy", 0.25, 2100.5,
                                         0.0, 0.0, false, nullptr, "unit test order");
   CHECK(order.status == "paper");
   CHECK(order.side == "BUY");
@@ -277,7 +283,7 @@ DROGON_TEST(TradingLogsPaperOrder)
 
   const auto orders = trading.orders(10);
   REQUIRE(orders.size() == 1);
-  CHECK(orders.front().message == "unit test order");
+  CHECK(orders.front().message.find("unit test order") != std::string::npos);
 
   std::ifstream in(golddiggerui::services().paths().ordersFile);
   std::string header;

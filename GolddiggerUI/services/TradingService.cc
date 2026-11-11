@@ -375,7 +375,9 @@ namespace golddiggerui
     if (settings.paperTrading)
     {
       order.status = "paper";
-      order.message = "paper trade: the order was logged but not sent to a broker";
+      const std::string paperNote =
+          "paper trade: the order was logged but not sent to a broker";
+      order.message = comment.empty() ? paperNote : comment + " · " + paperNote;
     }
     else
     {
