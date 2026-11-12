@@ -9,13 +9,17 @@ It currently supports:
 - daily patching of rolling Dukascopy candle CSV files
 - live prediction from Dukascopy CLI candle data
 - live prediction from Alpha Vantage `FX_INTRADAY`
+- live prediction from MetaTrader 5 over ZeroMQ
+- MetaTrader 5 ZeroMQ command exchange for heartbeat, spread, live data, and trade execution
 
-The project builds four binaries in the project root:
+The project builds the following binaries into `build/bin/`:
 
 - `trainer`
 - `predictor`
 - `tuner.bin`
 - `patcher.bin`
+- `validate.bin`
+- `mt5_gateway`
 
 ## What It Does
 
@@ -55,8 +59,10 @@ Build/runtime dependencies used by the current codebase:
 - [dlib](https://dlib.net/)
 - `nlohmann-json`
 - libcurl
+- libzmq / ZeroMQ
 - Node.js and `npx` if you want to use the Dukascopy provider
 - an Alpha Vantage API key if you want to use the Alpha Vantage provider
+- MetaTrader 5 plus an EA speaking the Golddigger ZeroMQ protocol if you want to use the MT5 provider
 
 This project also depends on local code from your HotBits repo:
 
@@ -82,6 +88,7 @@ On macOS, the current project configuration already looks for Homebrew installs 
 
 ```bash
 brew install nlohmann-json dlib curl
+brew install zeromq
 ```
 
 ## Build
@@ -93,14 +100,26 @@ cmake -S . -B build
 cmake --build build
 ```
 
-Executables are written to the project root:
+Executables are written to `build/bin`:
 
 ```text
-./trainer
-./predictor
-./tuner.bin
-./patcher.bin
+build/bin/trainer
+build/bin/predictor
+build/bin/tuner.bin
+build/bin/patcher.bin
+build/bin/validate.bin
+build/bin/mt5_gateway
 ```
+
+`golddigger_tests` is also written to `build/bin` and can be run through `ctest`:
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+Setting `-DGOLDDIGGER_BUILD_FULL=OFF` skips the worker/network/MT5 targets and
+builds only the shared feature/indicator code and the unit tests; this is the
+configuration used by CI.
 
 ## Data Files
 
@@ -134,6 +153,11 @@ Typical output files:
 If you pass custom output paths, those are used instead.
 
 ## Binary Usage
+
+Binaries are produced in `build/bin`. Relative data/model paths resolve against
+the current working directory, so the examples below work when run from the
+project root if you prefix the binary with `build/bin/` (e.g.
+`./build/bin/tuner.bin`).
 
 ### `tuner.bin`
 
@@ -216,6 +240,37 @@ Notes:
 - if no tuning file exists, trainer falls back to built-in defaults
 - `Ctrl+C` requests a graceful stop and waits for worker threads to exit
 
+### `validate.bin`
+
+Runs an expanding-window walk-forward evaluation of the SVR pipeline. Each fold
+trains on the oldest samples, validates on the next `N` samples, then grows the
+training window by `N` and repeats. A final model is trained on everything
+except the newest `--final-test` samples and scored on those.
+
+It reuses the same dataset construction (`load_training_dataset`), trained
+hyperparameters, SVR configuration, and RBF kernel as `trainer`, so the numbers
+measure the production pipeline instead of a separate research scaffold.
+
+```bash
+./build/bin/validate.bin --data Data/xauusd-m15-bid.csv
+./build/bin/validate.bin --data Data/xauusd-m15-bid.csv --first-train 20000 --step 5000 --final-test 5000
+./build/bin/validate.bin --data Data/xauusd-h1-bid.csv --tuner Models/tuner_h1.dat --max-train 40000
+```
+
+Flags:
+
+- `--data data.csv` CSV to evaluate (default `Data/xauusd-m15-bid.csv`)
+- `--tuner tuner.dat` explicit tuned parameters; defaults to the auto-located `Models/tuner_<timeframe>.dat`
+- `--first-train N` initial training window size (default `5000`)
+- `--step N` validation window size, also the growth per fold (default `2000`)
+- `--final-test N` newest samples held out for the final fold (default `5000`)
+- `--max-train N` cap the training window to its `N` most recent samples (default `0` = unlimited)
+- `--action-threshold F` tradeable-signal magnitude in log-returns (default `0.4`)
+
+Per fold it reports support vectors, MSE, MAE, sign hit-rate, signal rate, and
+signal hit-rate; the final line prints walk-forward averages plus the held-out
+final-test results.
+
 ### `predictor`
 
 Loads a trained model, fetches live candles from a provider, keeps track of the next missing candle timestamp, and predicts the signed best move over the configured future horizon after each newly completed candle becomes available.
@@ -224,6 +279,7 @@ Supported providers:
 
 - `dukascopy`
 - `alphavantage`
+- `mt5`
 
 General usage:
 
@@ -233,7 +289,7 @@ General usage:
 
 Useful flags:
 
-- `--provider dukascopy|alphavantage`
+- `--provider dukascopy|alphavantage|mt5`
 - `--model PATH`
 - `--instrument SYMBOL`
 - `--timeframe m15|h1|d1`
@@ -248,6 +304,11 @@ Provider-specific flags:
 - Alpha Vantage:
   `--alpha-vantage-api-key KEY`
   `--alpha-vantage-base-url URL`
+- MT5 ZeroMQ:
+  `--mt5-endpoint tcp://HOST:PORT`
+  `--mt5-client-id ID`
+  `--mt5-send-timeout-ms N`
+  `--mt5-receive-timeout-ms N`
 
 ### Predictor With Dukascopy
 
@@ -305,6 +366,104 @@ Current Alpha Vantage limitations:
 - supports `m15` and `h1`
 - `d1` is not supported through the current Alpha Vantage provider
 - volume is not provided by the API, so predictor uses `0.0` for volume on that provider
+
+### Predictor With MT5 ZeroMQ
+
+Example:
+
+```bash
+./predictor \
+  --provider mt5 \
+  --mt5-endpoint tcp://192.168.1.50:5555 \
+  --mt5-client-id golddigger-mac \
+  --model Models/xauusd-m15-bid.dat \
+  --instrument xauusd \
+  --timeframe m15
+```
+
+The MT5 provider uses JSON request/response envelopes over a ZeroMQ `REQ/REP` link.
+
+Request envelope:
+
+```json
+{
+  "protocol": "golddigger.mt5.zmq",
+  "version": 1,
+  "type": "request",
+  "request_id": "gd-1776355200000-0",
+  "client_id": "golddigger-mac",
+  "sent_at_utc_ms": 1776355200000,
+  "command": "GET_LIVE_DATA",
+  "payload": {
+    "instrument": "xauusd",
+    "timeframe": "m15",
+    "from_timestamp_ms": 1776351600000,
+    "to_timestamp_ms": 1776355200000,
+    "include_volumes": true
+  }
+}
+```
+
+Response envelope:
+
+```json
+{
+  "protocol": "golddigger.mt5.zmq",
+  "version": 1,
+  "type": "response",
+  "request_id": "gd-1776355200000-0",
+  "command": "GET_LIVE_DATA",
+  "status": "OK",
+  "payload": {
+    "instrument": "XAUUSD",
+    "timeframe": "m15",
+    "candles": [
+      {
+        "timestamp_ms": 1776354300000,
+        "open": 4821.10,
+        "high": 4823.00,
+        "low": 4819.80,
+        "close": 4820.15,
+        "volume": 1234.0
+      }
+    ]
+  }
+}
+```
+
+Supported MT5 commands on the Golddigger side:
+
+- `PING`
+- `GET_SPREAD`
+- `GET_LIVE_DATA`
+- `BUY`
+- `SELL`
+- `CLOSE_ALL`
+
+Trade execution payloads use:
+
+- `instrument`
+- `volume_lots`
+- optional `stop_loss`
+- optional `take_profit`
+- optional `price`
+- `deviation_points`
+- `magic`
+- `comment`
+
+### `mt5_gateway`
+
+`mt5_gateway` is a small CLI for exercising the MT5 ZeroMQ contract before wiring in automation.
+
+Examples:
+
+```bash
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 PING
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 GET_SPREAD --instrument xauusd
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 GET_LIVE_DATA --instrument xauusd --timeframe m15 --from-local "2026-04-17 08:00" --to-local "2026-04-17 10:00"
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 BUY --instrument xauusd --volume 0.10 --sl 4800 --tp 4850 --magic 20260417 --comment "golddigger-test"
+./mt5_gateway --endpoint tcp://192.168.1.50:5555 CLOSE_ALL --instrument xauusd --magic 20260417
+```
 
 ## Live Prediction Timing
 
@@ -402,15 +561,21 @@ Notes:
 
 ```text
 .
+├── .github/workflows/ci.yml
 ├── CMakeLists.txt
 ├── Data/
 ├── DataUpdate/
+├── Features/
 ├── Indicators/
 ├── MarketData/
+├── MT5/
 ├── Models/
 ├── Prediction/
+├── Tests/
 ├── Training/
 ├── Utils/
+├── Validation/
+├── mt5_gateway.cpp
 ├── patcher.cpp
 ├── predictor.cpp
 ├── trainer.cpp

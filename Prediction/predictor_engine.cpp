@@ -1,5 +1,6 @@
 #include "Prediction/predictor_engine.h"
 
+#include "Features/feature_builder.h"
 #include "Indicators/indicators.h"
 #include "Utils/utils.h"
 
@@ -14,20 +15,10 @@
 
 namespace
 {
-    constexpr int kReturnFeatureCount = 5;
-    constexpr int kRsiPeriod = 14;
-    constexpr int kSma20Period = 20;
-    constexpr int kSma50Period = 50;
-    constexpr int kAdxPeriod = 14;
-    constexpr int kAdxWindow = 28;
-    constexpr std::int64_t kHoursPerDay = 24;
-    constexpr std::int64_t kDaysPerWeek = 7;
     constexpr std::uint64_t kMillisecondsPerDay = 24ULL * 60ULL * 60ULL * 1000ULL;
     constexpr std::size_t kBootstrapExpansionMultiplier = 2;
     constexpr std::size_t kMaxBootstrapExpansionAttempts = 6;
     constexpr std::size_t kRecentOverlayLookbackCandles = 4;
-    constexpr std::size_t kM15PredictionHorizonCandles = 6;
-    constexpr std::size_t kH1AndD1PredictionHorizonCandles = 4;
 
     std::uint64_t current_timestamp_ms()
     {
@@ -35,18 +26,6 @@ namespace
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch())
                 .count());
-    }
-
-    std::pair<double, double> cyclical_time_features(std::uint64_t timestampMs)
-    {
-        const auto timePoint = std::chrono::system_clock::time_point(std::chrono::milliseconds(timestampMs));
-        const auto hoursSinceEpoch = std::chrono::duration_cast<std::chrono::hours>(
-                                         timePoint.time_since_epoch())
-                                         .count();
-
-        const auto hourOfDay = static_cast<double>(hoursSinceEpoch % kHoursPerDay);
-        const auto dayOfWeek = static_cast<double>((hoursSinceEpoch / kHoursPerDay) % kDaysPerWeek);
-        return {hourOfDay, dayOfWeek};
     }
 
     std::string format_local_interval(std::uint64_t startTimestampMs, std::uint64_t endTimestampMs)
@@ -103,8 +82,8 @@ namespace
 
     std::size_t prediction_horizon_candles(CandleTimeframe timeframe)
     {
-        return (timeframe == CandleTimeframe::M15) ? kM15PredictionHorizonCandles
-                                                   : kH1AndD1PredictionHorizonCandles;
+        return (timeframe == CandleTimeframe::M15) ? feature_builder::kM15HorizonCandles
+                                                   : feature_builder::kDefaultHorizonCandles;
     }
 }
 
@@ -315,14 +294,16 @@ bool PredictorEngine::bootstrap()
             if (m_candles.size() < requiredCandles)
                 throw;
 
-            std::cerr << "Warning: recent Dukascopy overlay failed during bootstrap, continuing with cached data: "
+            std::cerr << "Warning: recent " << m_provider->providerName()
+                      << " overlay failed during bootstrap, continuing with cached data: "
                       << e.what() << '\n';
         }
 
         if (m_candles.size() < requiredCandles)
         {
             auto lookbackCandles = std::max(m_config.bootstrapCandles, requiredCandles * 2);
-            std::cout << "Cached history is insufficient; requesting additional live history from Dukascopy...\n";
+            std::cout << "Cached history is insufficient; requesting additional live history from "
+                      << m_provider->providerName() << "...\n";
             for (std::size_t attempt = 0; attempt < kMaxBootstrapExpansionAttempts; ++attempt)
             {
                 const auto lookbackMs = intervalMs * static_cast<std::uint64_t>(lookbackCandles);
@@ -380,11 +361,11 @@ bool PredictorEngine::bootstrap()
     const auto latestCandleEndMs = latestCandleStartMs + intervalMs;
     std::string sourceSummary;
     if (usedCachedHistory && overlayApplied)
-        sourceSummary = " (cache + Dukascopy overlay)";
+        sourceSummary = " (cache + " + m_provider->providerName() + " overlay)";
     else if (usedCachedHistory)
         sourceSummary = " (cache)";
     else if (overlayApplied)
-        sourceSummary = " (Dukascopy)";
+        sourceSummary = " (" + m_provider->providerName() + ")";
     std::cout << "Loaded " << m_candles.size() << " candles for "
               << m_config.instrument << ' ' << to_string(m_config.timeframe)
               << sourceSummary
@@ -407,41 +388,7 @@ bool PredictorEngine::emitPrediction() const
         return false;
     }
 
-    sample_type sample;
-    for (int j = 0; j < kReturnFeatureCount; ++j)
-        sample(j) = std::log(m_candles[m_candles.size() - 1 - j].close /
-                             m_candles[m_candles.size() - 1 - j - 1].close);
-
-    std::vector<double> closes;
-    closes.reserve(kSma50Period);
-    for (std::size_t k = m_candles.size() - kSma50Period; k < m_candles.size(); ++k)
-        closes.push_back(m_candles[k].close);
-
-    sample(5) = get_rsi(closes, kRsiPeriod);
-
-    std::vector<Candle> adxCandles(m_candles.end() - kAdxWindow, m_candles.end());
-    sample(6) = calculate_adx(adxCandles, kAdxPeriod);
-    // Relative ATR (Volatility as a percentage of price) to capture volatility without scale issues
-    double rawAtr = get_atr(adxCandles, kAdxPeriod);
-    sample(7) = (rawAtr > 0.0) ? (rawAtr / m_candles.back().close) : 0.0;
-    // Realtive SMA20 to capture short-term trend strength without scale issues
-    double rawSma20 = get_sma(closes, kSma20Period);
-    sample(8) = (rawSma20 > 0.0) ? ((m_candles.back().close - rawSma20) / m_candles.back().close) : 0.0;
-    // Realtive SMA50 to capture long-term trend strength without scale issues
-    double rawSma50 = get_sma(closes, kSma50Period);
-    sample(9) = (rawSma50 > 0.0) ? ((m_candles.back().close - rawSma50) / m_candles.back().close) : 0.0;
-    // If you are using multiple Moving Averages (e.g., a 20-period and a 50-period), you can also add a "Spread" feature:
-    // This allows the model to see MA Crossovers in a scale-invariant way.
-    sample(10) = (rawSma50 > 0.0) ? (rawSma20 - rawSma50) / m_candles.back().close : 0.0;
-    // Advanced Sine/Cosine encoding for hour of day and day of week to capture cyclical patterns
-    const auto [hourOfDay, dayOfWeek] = cyclical_time_features(m_candles.back().timestamp);
-    double hourAngle = (2 * M_PI * hourOfDay) / 24.0;
-    double dayAngle = (2 * M_PI * dayOfWeek) / 7.0;
-    sample(11) = std::sin(hourAngle);  // Captures time-of-day position in a cyclical manner
-    sample(12) = std::cos(hourAngle); // Captures proximity of 23:00 to 00:00 and 12:00 to 00:00
-    sample(13) = std::sin(dayAngle);  // Captures day-of-week position in a cyclical manner
-    sample(14) = std::cos(dayAngle);  // Captures proximity of Sunday to Monday and Wednesday to Sunday
-
+    sample_type sample = feature_builder::build_feature_sample(m_candles, m_candles.size() - 1);
     sample = m_normalizer(sample);
 
     const double predictedLogReturn = m_decisionFunction(sample);
@@ -528,11 +475,7 @@ void PredictorEngine::trimHistory()
 
 std::size_t PredictorEngine::requiredHistoryCandles() const noexcept
 {
-    const auto indicatorMinimum = std::max<std::size_t>(
-        {static_cast<std::size_t>(kSma50Period),
-         static_cast<std::size_t>(kAdxWindow),
-         static_cast<std::size_t>(kReturnFeatureCount + 1)});
-    return std::max(m_config.minimumCandles, indicatorMinimum);
+    return std::max(m_config.minimumCandles, feature_builder::min_history_candles());
 }
 
 std::uint64_t PredictorEngine::latestAvailableUpperBoundMs(std::uint64_t nowTimestampMs) const

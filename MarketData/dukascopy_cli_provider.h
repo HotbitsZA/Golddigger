@@ -13,6 +13,7 @@ public:
 
     std::vector<Candle> fetchCandles(const CandleFetchRequest &request) const override;
     std::string describeRequest(const CandleFetchRequest &request) const override;
+    std::string providerName() const override { return "Dukascopy"; }
     std::chrono::milliseconds livePublicationInterval(CandleTimeframe timeframe) const override;
 
 private:

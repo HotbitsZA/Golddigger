@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <map>
 #include <stdexcept>
 #include <sstream>
@@ -12,28 +13,49 @@ void read_gold_data(const std::string &filename, std::vector<Candle> &candles)
 {
     std::vector<Candle> data;
     std::ifstream file(filename);
+    if (!file)
+        throw std::runtime_error("Failed to open candle file for reading: " + filename);
+
     std::string line;
     std::getline(file, line); // Skip header
 
+    std::size_t skippedRows = 0;
     while (std::getline(file, line))
     {
-        std::stringstream ss(line);
-        std::string val;
-        Candle c;
-        std::getline(ss, val, ',');
-        c.timestamp = std::stoull(val);
-        std::getline(ss, val, ',');
-        c.open = std::stod(val);
-        std::getline(ss, val, ',');
-        c.high = std::stod(val);
-        std::getline(ss, val, ',');
-        c.low = std::stod(val);
-        std::getline(ss, val, ',');
-        c.close = std::stod(val);
-        std::getline(ss, val, ',');
-        c.volume = std::stod(val);
-        data.push_back(c);
+        if (line.empty())
+            continue;
+
+        try
+        {
+            std::stringstream ss(line);
+            std::string val;
+            Candle c;
+            std::getline(ss, val, ',');
+            c.timestamp = std::stoull(val);
+            std::getline(ss, val, ',');
+            c.open = std::stod(val);
+            std::getline(ss, val, ',');
+            c.high = std::stod(val);
+            std::getline(ss, val, ',');
+            c.low = std::stod(val);
+            std::getline(ss, val, ',');
+            c.close = std::stod(val);
+            std::getline(ss, val, ',');
+            c.volume = std::stod(val);
+            data.push_back(c);
+        }
+        catch (const std::exception &)
+        {
+            ++skippedRows;
+        }
     }
+
+    if (data.empty())
+        throw std::runtime_error("No valid candle rows found in " + filename + ".");
+
+    if (skippedRows > 0)
+        std::cerr << "Warning: skipped " << skippedRows << " malformed row(s) in " << filename << ".\n";
+
     candles.clear();
     candles.swap(data);
 }

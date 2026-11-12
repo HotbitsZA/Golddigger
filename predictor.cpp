@@ -1,6 +1,7 @@
 #include "MarketData/alpha_vantage_fx_provider.h"
 #include "MarketData/candle_data_provider.h"
 #include "MarketData/dukascopy_cli_provider.h"
+#include "MarketData/mt5_zeromq_provider.h"
 #include "Prediction/predictor_engine.h"
 
 #include <cstdlib>
@@ -17,9 +18,11 @@ namespace
 void print_usage()
 {
     std::cout << "Usage: predictor [--model PATH] [--instrument SYMBOL] [--timeframe m15|h1|d1]\n"
-              << "                 [--provider dukascopy|alphavantage]\n"
+              << "                 [--provider dukascopy|alphavantage|mt5]\n"
               << "                 [--dukascopy-command CMD] [--dukascopy-debug-dir DIR]\n"
               << "                 [--alpha-vantage-api-key KEY] [--alpha-vantage-base-url URL]\n"
+              << "                 [--mt5-endpoint tcp://HOST:PORT] [--mt5-client-id ID]\n"
+              << "                 [--mt5-send-timeout-ms N] [--mt5-receive-timeout-ms N]\n"
               << "                 [--poll-seconds N] [--availability-delay-seconds N]\n"
               << "                 [--max-predictions N]\n";
 }
@@ -33,6 +36,7 @@ int main(int argc, char *argv[])
     std::string dukascopyDebugDirectory;
     std::string alphaVantageApiKey;
     std::string alphaVantageBaseUrl{"https://www.alphavantage.co/query"};
+    mt5::ClientConfig mt5Config;
     bool modelProvided = false;
 
     if (const char *envCommand = std::getenv("DUKASCOPY_NODE_COMMAND"))
@@ -99,6 +103,22 @@ int main(int argc, char *argv[])
         {
             alphaVantageBaseUrl = require_value("--alpha-vantage-base-url");
         }
+        else if (argument == "--mt5-endpoint")
+        {
+            mt5Config.endpoint = require_value("--mt5-endpoint");
+        }
+        else if (argument == "--mt5-client-id")
+        {
+            mt5Config.clientId = require_value("--mt5-client-id");
+        }
+        else if (argument == "--mt5-send-timeout-ms")
+        {
+            mt5Config.sendTimeoutMs = std::stoi(require_value("--mt5-send-timeout-ms"));
+        }
+        else if (argument == "--mt5-receive-timeout-ms")
+        {
+            mt5Config.receiveTimeoutMs = std::stoi(require_value("--mt5-receive-timeout-ms"));
+        }
         else if (argument == "--poll-seconds")
         {
             config.pollInterval = std::chrono::seconds(std::stoll(require_value("--poll-seconds")));
@@ -133,6 +153,10 @@ int main(int argc, char *argv[])
             alphaVantageApiKey,
             alphaVantageBaseUrl,
             "compact"});
+    }
+    else if (providerName == "mt5")
+    {
+        provider = std::make_unique<Mt5ZeroMqProvider>(mt5Config);
     }
     else
     {

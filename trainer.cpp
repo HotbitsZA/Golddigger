@@ -66,35 +66,6 @@ int main(int argc, char *argv[])
 {
     install_termination_signal_handlers();
 
-    // Just a little test, to read training data find out the max_label value.
-    // double max_label = 0.0;
-    // uint64_t isNaNcount = 0;
-    // uint64_t isNaNlabelCount = 0;
-    // std::string dataFile{kDefaultDataFile};
-
-    // auto dataset = load_training_dataset(dataFile);
-
-    // for(const auto& row : dataset.samples)
-    // {
-    //     for(long i = 0; i < row.size(); ++i)
-    //     {
-    //         if(std::isnan(row(i)))
-    //             isNaNcount++;
-    //     }
-    // }
-
-    // for (const auto &label : dataset.labels)
-    // {
-    //     if(std::isnan(label))
-    //         isNaNlabelCount++;
-    //     if (std::abs(label) > max_label)
-    //         max_label = std::abs(label);
-    // }
-    // std::cout << "Max label magnitude: " << max_label << "vs Epsilon: " << 0.0025 << std::endl;
-    // std::cout << "Number of NaN values in features: " << isNaNcount << std::endl;
-    // std::cout << "Number of NaN values in labels: " << isNaNlabelCount << std::endl;
-    // return 0;
-
     std::vector<RunningWorker> workers;
     std::unordered_set<std::string> modelOutputs;
 

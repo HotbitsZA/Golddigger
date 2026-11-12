@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Golddigger &middot; XAUUSD cockpit</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f5c451'/%3E%3Ctext x='32' y='44' font-family='Arial' font-size='32' font-weight='700' text-anchor='middle' fill='%2310151f'%3EGD%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">GD</span>
+      <div>
+        <h1>Golddigger</h1>
+        <p class="subtitle">XAUUSD model cockpit &middot; files and live providers only</p>
+      </div>
+    </div>
+    <div class="meta">
+      <span id="pill-instrument" class="pill">xauusd</span>
+      <span id="pill-mode" class="pill">manual</span>
+      <span id="pill-paper" class="pill">paper</span>
+      <span id="pill-now" class="pill">--:--:--</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <!-- ------------------------------------------------------- timeframe -->
+    <section class="card hero">
+      <div class="hero-head">
+        <div>
+          <p class="eyebrow">Selected timeframe</p>
+          <h2>
+            <span id="hero-label">M15</span>
+            <span id="hero-stale" class="badge hold hidden">stale</span>
+          </h2>
+          <p id="hero-sub" class="hint">Choose a timeframe; the matching model is selected automatically.</p>
+        </div>
+        <div id="timeframe-switch" class="segmented" role="tablist" aria-label="Timeframe"></div>
+      </div>
+      <div id="hero-cards" class="hero-grid"></div>
+    </section>
+
+    <!-- --------------------------------------------------- candles+signal -->
+    <div class="grid-2 wide-left">
+      <section class="card candles-card">
+        <div class="card-head">
+          <div>
+            <h3>Last 5 candles</h3>
+            <p id="candles-hint" class="hint">The newest completed candles of the selected timeframe.</p>
+          </div>
+          <div class="card-actions">
+            <select id="candle-source" aria-label="Candle source">
+              <option value="file">file</option>
+              <option value="live">live</option>
+              <option value="auto">auto</option>
+            </select>
+            <button id="reload-candles" class="ghost" type="button">Reload</button>
+            <button id="fetch-live" class="primary" type="button">Fetch live</button>
+          </div>
+        </div>
+
+        <div class="candle-hero">
+          <div>
+            <div id="last-price" class="price">--</div>
+            <div id="last-change" class="change">--</div>
+          </div>
+          <div id="last-meta" class="hint"></div>
+        </div>
+
+        <div id="candle-chart" class="candle-chart" aria-label="Candlestick chart"></div>
+
+        <div class="table-wrap">
+          <table id="candles-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Time</th>
+                <th>Open</th>
+                <th>High</th>
+                <th>Low</th>
+                <th>Close</th>
+                <th>Change</th>
+                <th>Range</th>
+                <th>Volume</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p id="candles-warning" class="warn hidden"></p>
+      </section>
+
+      <aside class="card signal-card">
+        <div class="card-head">
+          <div>
+            <h3>Model signal</h3>
+            <p class="hint">Inference of the auto-selected model over the newest candle.</p>
+          </div>
+          <span id="signal-mode" class="badge">--</span>
+        </div>
+
+        <div class="signal-hero">
+          <span id="signal-action" class="signal-action hold">--</span>
+          <div>
+            <div id="signal-target" class="signal-target">--</div>
+            <div class="hint">predicted target price</div>
+          </div>
+        </div>
+
+        <div class="signal-metrics">
+          <div><span>Predicted change</span><strong id="signal-change">--</strong></div>
+          <div><span>Edge vs spread</span><strong id="signal-edge">--</strong></div>
+          <div><span>Horizon ends</span><strong id="signal-horizon">--</strong></div>
+          <div><span>Candle</span><strong id="signal-candle">--</strong></div>
+        </div>
+
+        <p id="signal-model" class="hint">--</p>
+        <div id="signal-message" class="notice hidden"></div>
+
+        <div class="signal-actions">
+          <button id="execute-signal" class="primary" type="button">Execute signal</button>
+          <button id="auto-check" class="ghost" type="button">Run auto check</button>
+        </div>
+        <p id="signal-auto" class="hint"></p>
+      </aside>
+    </div>
+
+    <!-- -------------------------------------------------------- settings -->
+    <section class="card settings-card">
+      <div class="card-head">
+        <div>
+          <h3>Execution &amp; data settings</h3>
+          <p class="hint">
+            Safe defaults: manual execution, paper trading and an unarmed auto trader.
+            Settings are stored in <code id="settings-path">state/settings.json</code>.
+          </p>
+        </div>
+        <div class="card-actions">
+          <span id="settings-mode" class="badge">manual</span>
+          <button id="save-settings" class="primary" type="button">Save settings</button>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <fieldset>
+          <legend>Execution</legend>
+          <label>Mode
+            <select id="exec-mode">
+              <option value="manual">Manual</option>
+              <option value="auto">Automatic</option>
+            </select>
+          </label>
+          <label class="check">
+            <input id="auto-armed" type="checkbox">
+            <span>Arm automatic orders</span>
+          </label>
+          <label class="check">
+            <input id="paper-trading" type="checkbox">
+            <span>Paper trading (log only)</span>
+          </label>
+          <label class="check danger hidden" id="live-confirm-row">
+            <input id="live-confirm" type="checkbox">
+            <span>I understand live orders are sent to MT5</span>
+          </label>
+          <div class="two-col">
+            <label>Volume (lots)
+              <input id="volume-lots" type="number" min="0.01" max="1000" step="0.01">
+            </label>
+            <label>Estimated spread
+              <input id="estimated-spread" type="number" min="0" max="10000" step="0.01">
+            </label>
+            <label>Stop loss distance
+              <input id="stop-loss" type="number" min="0" step="0.01">
+            </label>
+            <label>Take profit distance
+              <input id="take-profit" type="number" min="0" step="0.01">
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Data &amp; model</legend>
+          <div class="two-col">
+            <label>Instrument
+              <input id="instrument" type="text" autocomplete="off">
+            </label>
+            <label>Provider
+              <select id="provider">
+                <option value="dukascopy">Dukascopy</option>
+                <option value="alphavantage">Alpha Vantage</option>
+                <option value="mt5">MT5 ZeroMQ</option>
+              </select>
+            </label>
+            <label>Default source
+              <select id="data-source">
+                <option value="file">CSV files</option>
+                <option value="live">Live provider</option>
+                <option value="auto">Live with file fallback</option>
+              </select>
+            </label>
+            <label>Poll seconds
+              <input id="poll-seconds" type="number" min="5" max="3600" step="1">
+            </label>
+            <label>Availability delay (s)
+              <input id="availability-delay" type="number" min="0" max="3600" step="1">
+            </label>
+            <label>Alpha Vantage key
+              <input id="alpha-key" type="password" autocomplete="off" placeholder="leave blank to keep">
+            </label>
+          </div>
+          <div class="timeframe-chips">
+            <span class="chips-label">Auto timeframes</span>
+            <label class="chip"><input type="checkbox" data-auto-tf="m15"> M15</label>
+            <label class="chip"><input type="checkbox" data-auto-tf="h1"> H1</label>
+            <label class="chip"><input type="checkbox" data-auto-tf="d1"> D1</label>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="settings-foot">
+        <div id="provider-readiness" class="provider-list"></div>
+        <button id="test-provider" class="ghost" type="button">Test provider</button>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------- orders + ticket -->
+    <div class="grid-2">
+      <section class="card orders-card">
+        <div class="card-head">
+          <div>
+            <h3>Order log</h3>
+            <p id="orders-path" class="hint">state/orders.csv</p>
+          </div>
+          <div class="card-actions">
+            <span id="orders-count" class="badge">0</span>
+            <button id="reload-orders" class="ghost" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="orders-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Kind</th>
+                <th>TF</th>
+                <th>Side</th>
+                <th>Volume</th>
+                <th>Price</th>
+                <th>SL</th>
+                <th>TP</th>
+                <th>Status</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p id="orders-empty" class="hint">No order has been placed yet.</p>
+      </section>
+
+      <section class="card ticket-card">
+        <div class="card-head">
+          <div>
+            <h3>Manual order ticket</h3>
+            <p class="hint">A blank price uses the newest close of the selected timeframe.</p>
+          </div>
+        </div>
+        <form id="ticket-form">
+          <div class="ticket-grid">
+            <label>Side
+              <select id="ticket-side">
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL</option>
+              </select>
+            </label>
+            <label>Volume (lots)
+              <input id="ticket-volume" type="number" min="0.01" max="1000" step="0.01">
+            </label>
+            <label>Price
+              <input id="ticket-price" type="number" min="0" step="0.01" placeholder="last close">
+            </label>
+            <label>Stop loss
+              <input id="ticket-sl" type="number" min="0" step="0.01" placeholder="optional">
+            </label>
+            <label>Take profit
+              <input id="ticket-tp" type="number" min="0" step="0.01" placeholder="optional">
+            </label>
+            <label>Comment
+              <input id="ticket-comment" type="text" autocomplete="off" placeholder="manual order from GolddiggerUI">
+            </label>
+          </div>
+          <div class="ticket-foot">
+            <button type="submit" class="primary">Place manual order</button>
+            <span id="ticket-hint" class="hint">Timeframe: M15</span>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <footer class="foot">
+      <span>GolddiggerUI &middot; no database: candles, models, settings and orders are plain files.</span>
+      <span id="foot-paths"></span>
+    </footer>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -17,6 +17,7 @@ public:
     explicit AlphaVantageFxProvider(Config config);
 
     std::vector<Candle> fetchCandles(const CandleFetchRequest &request) const override;
+    std::string providerName() const override { return "Alpha Vantage"; }
 
 private:
     Config m_config;
